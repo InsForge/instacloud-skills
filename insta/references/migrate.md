@@ -113,8 +113,8 @@ insta --agent services add postgres db                          # + redis/storag
 insta --agent services add compute app --port <n>               # REQUIRED: the bind below targets it
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent deploy --image <registry/img> --port <n>          # works on every compute plane
-# or: insta --agent deploy <dir> --port <n>                     # Dockerfile required, Fly-backed compute only
-# or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; nixpacks if no Dockerfile
+# or: insta --agent deploy <dir> --port <n>                     # any plane; no GitHub needed; Dockerfile optional on insta-compute
+# or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; redeploys on push (private repos)
 ```
 
 **What nixpacks decides for you, and where that bites.** Three of its decisions are silent
@@ -188,27 +188,35 @@ the nixpacks type "only `context_path` is configurable" — so no choice of lane
 a build fails, fix the repo (a `Procfile`, a version pin, a committed `Dockerfile`), not the
 transport.
 
-**Which lane, and why it is `connect-repo` for a migration.** Two independent constraints rule out
-the directory deploy, and only one of them is about the compute plane:
+**Which lane. `insta deploy <dir>` is now the migration default, on every plane.** The archive
+lane shipped (insta-cli#197, and the `source-build` discovery endpoint is on platform main and on
+prod), and it changes the answer this file used to give. Measured on staging, 2026-09-11: a
+Dockerfile-less `render-examples/express-hello-world` checkout, `insta --agent deploy . --port 3000`,
+**HTTP 200** — packed 7 files, `deploying … via the gateway (nixpacks)`, built, deployed. **66
+seconds with a warm builder, 6m28s cold** (the remote builder is Fly's; warm it with a throwaway
+build before anything time-sensitive).
 
-1. `insta deploy <dir>` is refused outright on **insta-compute** (`source builds are not supported
-   on the insta-compute provider yet`). Plane-specific.
-2. `insta deploy <dir>` **requires a Dockerfile in the directory, on every plane, Fly included.**
-   `cli/src/commands/deploy.ts` states it: "A directory deploy builds the Dockerfile IN the
-   directory — there is no no-Dockerfile lane here. The nixpacks (no-Dockerfile) lane is real but
-   server-side: it runs on the build gateway for GitHub-connected repos."
+How the CLI decides, so you can predict it: it asks `GET /projects/:id/source-build?branch=&group=`
+and the **platform** answers `flyctl`, `archive`, `local-docker` or `none`. Measured: a Fly-backed
+service answers `{"lane":"flyctl"}`, an insta-compute service answers `{"lane":"archive"}` with the
+server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files). A platform too old to have
+the endpoint answers 404 and the CLI falls back to the old flyctl path unchanged. So:
 
-**The second is the binding one here**, and it does not depend on the plane. An app arriving from
-Render, Railway or Heroku was built by a buildpack and has no Dockerfile, so the directory deploy
-fails on Fly too, and the CLI's own error tells you to connect the repo. So `connect-repo` is the
-migration default because of the app's shape, not as a workaround for a missing feature — it would
-still be the right lane if insta-compute gained source builds tomorrow.
+- **insta-compute target:** `deploy <dir>` packs the directory and the gateway builds it — with the
+  Dockerfile if one is present, **nixpacks if not.** No GitHub, no App authorization: this removes
+  the one step in this runbook only a human could perform for a private repo.
+- **Fly-backed target:** `deploy <dir>` still needs a Dockerfile (the flyctl lane builds it). A Fly
+  app has one, so it works; a buildpack app does not, so use `connect-repo` there.
 
-Use `insta --agent deploy --image` instead when the user already publishes an image, and
-`insta --agent deploy <dir>` only when the repo genuinely carries a Dockerfile **and** the target is
-Fly-backed. When the archive lane lands (`InsForge/insta-compute#241`) the directory deploy will
-select nixpacks for a Dockerfile-less directory and become preferable, because it needs no GitHub
-App — which is today the one step in this runbook only a human can perform, for a private repo.
+**`connect-repo` is still right for three things:** a private repo the user wants redeployed on
+push; a tree the archive lane refuses — symlinks are rejected **at pack time**, by path
+(`a deploy archive cannot contain symlinks — the build gateway rejects them: link.txt -> real.txt`),
+and so are trees over the three limits; and any case where the code is not checked out locally.
+
+**Neither lane changes what nixpacks does.** Measured: `render-examples/celery` fails through the
+archive lane with the identical `build … failed: build command failed` it produced through
+`connect-repo`. Same builder, same detection, same pins. The lane is only how the source arrives.
+
 
 Without the `services add compute` line the bind fails with `service not found on branch:
 compute/app`. A deploy materializes env into the machine config, so the binding takes effect with
@@ -886,15 +894,16 @@ as any: creating a target volume does not copy contents.
 
 **Fly.** The easiest source of the four, and the only one that is not a Postgres downgrade: Fly
 Managed Postgres runs **16**, the same major as insta's, so step 3 needs no filter. A Fly app also
-already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` works directly
-**on Fly-backed compute only** — the same restriction as everywhere else in this file: on
-insta-compute the platform refuses it outright, so confirm the target's plane before planning
-around it, and fall back to `connect-repo`. Where it is available it also means
-`internal_port` in `fly.toml` is the `--port` value. `[processes]` maps onto compute services, and
+already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` from the local
+checkout works **on every plane** — the flyctl lane builds the Dockerfile on Fly-backed compute, the
+archive lane builds it on insta-compute — and needs no GitHub connection. `internal_port` in
+`fly.toml` is the `--port` value, and `[env]` entries become plain secrets. Note the builder
+**ignores the repo's `fly.toml`** on the insta-compute lane (`instaflybuilder` writes its own; the
+comment says caller config never reaches it), so nothing in that file affects the build here. `[processes]` maps onto compute services, and
 volumes carry the same caveat as any. **The one real obstacle is secrets:** `fly secrets list`
 returns names and digests only, because "the actual value of the secret is only available to the
-application", so there is no export. Read them off a running machine with
-the machine before you stop it — but **read one name at a time, never the whole env**:
+application", so there is no export. Read them off the running machine before you stop it — **one name at a
+time, never the whole env**, and piped so the value never reaches your terminal:
 **pipe it, never print it** — one name at a time, straight into the target, so the value never
 reaches your output:
 
