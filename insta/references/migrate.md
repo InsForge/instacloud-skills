@@ -506,7 +506,9 @@ insta's own `pg_cron` session until you `pg_terminate_backend` it, and the recre
 **loses the platform's preinstalled extensions** — read the set with
 `psql "$T" -c "select extname from pg_extension order by 1"` rather than assuming it; measured on a
 fresh staging pg16 it was `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`,
-and **not** `pgcrypto` or `uuid-ossp`, so an app wanting `gen_random_uuid()` must create it. If you do add a fresh service the
+and **not** `pgcrypto` or `uuid-ossp`, so an app calling `crypt()`, `gen_salt()` or `uuid_generate_v4()`
+must create the extension that owns it. (`gen_random_uuid()` is **not** an example of this: it has been core
+since PG13 and needs no extension on pg16.) If you do add a fresh service the
 DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
@@ -544,8 +546,9 @@ raises an error at restore time:
    `ALTER TABLE … DROP CONSTRAINT <name>` will fail on the migrated database only.
 3. **The target's extension set is not the source's.** insta preinstalls its own (measured on a fresh
    staging pg16: `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`) and does
-   **not** ship `pgcrypto` or `uuid-ossp`, so an app calling `gen_random_uuid()` needs
-   `CREATE EXTENSION` even though the restore was clean.
+   **not** ship `pgcrypto` or `uuid-ossp`, so an app calling something those own — `crypt()`, `gen_salt()`,
+   `uuid_generate_v4()` — needs `CREATE EXTENSION` even though the restore was clean. Not
+   `gen_random_uuid()`, which is core from PG13 on.
 
 If they want a fidelity check of their own, the cheapest honest one is a per-table row count on both
 sides — `select relname, n_live_tup` is **not** it (`n_live_tup` is an estimate and reads `0` for a
