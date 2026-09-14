@@ -1111,10 +1111,25 @@ PostgREST.
    umask 077                                         # everything written below is 600
    ifc() { npx -y @insforge/cli --json "$@"; }
    for p in JWT_SECRET:JWT_SECRET API_KEY:ACCESS_API_KEY ANON_KEY:ACCESS_ANON_KEY; do
-     ifc secrets get "${p%%:*}" | jq -er '.value' | insta --agent secrets set "${p##*:}" --service compute/api
-   done                                              # jq -e: a missing .value fails the pipeline instead of
-   ifc db connection-string | jq -er '.connectionString' > src.dsn   # setting the secret to "null"
-   SRC() { psql "$(cat src.dsn)" "$@"; }             # $(cat …) keeps the DSN out of argv, where `ps` would show it
+     v="$(ifc secrets get "${p%%:*}" | jq -r '.value // empty')"   # `// empty` prints NOTHING for a missing key.
+     [ -n "$v" ] || { echo "source returned no ${p%%:*}" >&2; exit 1; }   # `jq -e` would still print `null` and,
+     printf '%s' "$v" | insta --agent secrets set "${p##*:}" --service compute/api   # with no pipefail here, the
+   done                                              # pipeline's status is `secrets set`'s — storing "null" as
+   ifc db connection-string | jq -r '.connectionString // empty' > src.dsn   # the anon key, silently. Check first.
+   [ -s src.dsn ] || { echo 'no connection string — is this a cloud project, and is its backend up?' >&2; exit 1; }
+
+   # libpq env, never argv: `psql "$(cat src.dsn)"` expands BEFORE psql runs, so the DSN lands in the command line
+   # where `ps` shows it to every local user. PGHOST/PGPASSWORD/… do not appear there.
+   python3 - src.dsn > src.pgenv <<'PY2'
+   import sys, shlex, urllib.parse as u
+   d = u.urlsplit(open(sys.argv[1]).read().strip()); q = dict(u.parse_qsl(d.query))
+   for k, v in (("PGHOST", d.hostname), ("PGPORT", d.port or 5432), ("PGDATABASE", (d.path or "/").lstrip("/")),
+                ("PGUSER", u.unquote(d.username or "")), ("PGPASSWORD", u.unquote(d.password or "")),
+                ("PGSSLMODE", q.get("sslmode", "require"))):
+       print(f"export {k}={shlex.quote(str(v))}")
+   PY2
+   . ./src.pgenv                                     # psql and pg_dump below take NO connection argument
+   SRC() { psql -X "$@"; }                           # …and neither does the dump: `pg_dump > dump-raw.sql`
    ```
 
    **`ENCRYPTION_KEY` is absent on cloud, and must stay
