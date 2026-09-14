@@ -1075,7 +1075,15 @@ own `kid`, so nobody logs in again and no OAuth or API key is re-entered. (b) **
 public objects download anonymously through a presigned redirect, private ones 401 anonymous and 200
 with a session, sha256 equal to source.
 
-Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged. If step 1 of the ordered cutover
+Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged.
+
+**Ask where the app itself runs, because for some users it was on the machine you just told them to stop.**
+A self-hosted InsForge can host apps: `providers/compute/docker.provider.ts` runs containers through a mounted
+Docker socket, and `providers/deployments/vercel.provider.ts` pushes frontends. A user whose frontend sits on
+Vercel or Netlify changes `baseUrl` and is done. A user who deployed **through** their InsForge has nothing left
+serving once the source stops. That case is **optional extra work, not part of the migration**, and it is a
+compute service like any other: `insta --agent deploy <dir> --port <n>` from the app's checkout, then point its
+own `baseUrl` at the api host. Offer it, do not assume it, and do not let it delay the cutover. If step 1 of the ordered cutover
 proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
 `PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
 measured annoyances: InsForge admin tokens expire after 900 s (`"Invalid token"` on reuse), and PostgREST's schema
