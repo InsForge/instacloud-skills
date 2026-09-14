@@ -380,7 +380,16 @@ command from here to step 5 must name that new one:
 
 ```bash
 export PG=db2        # ← the FRESH service; plain `db` only if you never re-added
+# A fresh service is created AND bound here, before any restore touches it:
+insta --agent services add postgres "$PG"
+insta --agent secrets bind DATABASE_URL "postgres/$PG" --to compute/<service>
 ```
+
+The `bind` is an upsert on the env name (`provisioning/userSecrets.ts` → `upsertBinding`), so it
+replaces the `postgres/db` source from step 1 with no `unbind` first; it refuses only when a *user
+secret* of the same name exists. It is rules-only until step 5's `restart`, so the stopped app is
+not touched by it — but without it step 5 restarts the app onto the **old dirty database** while
+every check from here on reports success against `$PG`.
 
 This is the sharpest trap in the whole procedure. With two postgres services a bare
 `insta --agent db url` fails loudly (`error: multiple postgres services — specify one: db, db2`),
@@ -487,7 +496,7 @@ insta's own `pg_cron` session until you `pg_terminate_backend` it, and the recre
 `psql "$T" -c "select extname from pg_extension order by 1"` rather than assuming it; measured on a
 fresh staging pg16 it was `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`,
 and **not** `pgcrypto` or `uuid-ossp`, so an app wanting `gen_random_uuid()` must create it. If you do add a fresh service the
-DSN changes, so see step 5.
+DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
 status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both.
@@ -602,6 +611,7 @@ after a downgrade, constraints validated, `indexdef`s equal, and every function 
 insta --agent compute start <service>
 
 # binding CHANGED (you restored into a fresh postgres service):
+insta --agent secrets bindings --target compute/<service>   # MUST print: DATABASE_URL <- postgres/$PG.DATABASE_URL
 insta --agent compute start <service> && insta --agent compute restart <service>
 ```
 
@@ -609,7 +619,9 @@ insta --agent compute start <service> && insta --agent compute restart <service>
 brings the machine back **with the env it was deployed with**, so the app keeps writing to the
 pre-migration database — while `insta --agent secrets bindings` already reports the new source. `restart`
 does re-resolve (`restarted … — env re-resolved from the current secrets`) but is **refused on a
-stopped service**, so the changed-binding case is `start` *then* `restart`.
+stopped service**, so the changed-binding case is `start` *then* `restart`. If `bindings` still names `postgres/db`,
+the step-3 rebind never happened: run it now, before `start`, or the app comes up on the dirty
+database with every earlier check green.
 
 **Now apply the pre-flight finding**, because the host finally exists. Read it off the service row
 and set it into the name the app actually reads — its own name, never ours; the app has no idea
