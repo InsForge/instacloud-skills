@@ -484,8 +484,13 @@ catalogs, after confirming `attnotnull` is set on every column.
 step 1, check before restoring rather than trusting that it wrote nothing:
 
 ```bash
-# a real count(*) per table across every non-system schema (NOT n_live_tup); must return nothing at all
-psql "$T" -At -f /tmp/counts.sql
+T="$(insta --agent db url --group "$PG")"        # the target DSN; `$PG` is the service you restore INTO
+# A real count(*) per table across every non-system schema — NOT `n_live_tup`, which is an estimate and
+# reads 0 for a fully populated table after a stats reset (measured). Must return nothing at all.
+psql "$T" -At -c "select string_agg(format('select %L::text, count(*) from %I.%I', c.relname, n.nspname, c.relname), ' union all ')
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where c.relkind = 'r' and n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'" \
+  | psql "$T" -At -F'|' | awk -F'|' '$2 != "0"'
 ```
 
 A single row from a health check or a session store is enough to collide the restore. If anything
@@ -502,14 +507,21 @@ and **not** `pgcrypto` or `uuid-ossp`, so an app wanting `gen_random_uuid()` mus
 DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
-status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both.
+status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both. The `^ERROR`
+pattern above is correct **for these two restores because they are piped** — psql reading stdin emits
+a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as the InsForge section does)
+prefixes every one with `psql:<file>:<line>:`, so match both spellings when you are not sure which
+form you ran: `grep -cE '^(psql:.*)?ERROR'`.
 *Pass:* `grep -c '^ERROR'` is 0. Exit 0 alone does not prove it — the guards above are what make that
 count trustworthy.
 **4. Confirm the restore, and hand verification back.**
 
-*Pass:* **the restore reported zero errors.** That is the whole of step 4. `grep -c '^psql:.*ERROR'`
-on the restore log is `0`, and the guards in step 3 (`ON_ERROR_STOP`, `pipefail`, the dump-completeness
-check) held. Nothing else here is yours to assert.
+*Pass:* **the restore reported zero errors.** That is the whole of step 4. On the restore log,
+`grep -cE '^(psql:.*)?ERROR' restore.log` is `0` — **both spellings, because the prefix depends on how
+psql was invoked**: a piped restore emits bare `ERROR:`, `psql -f dump.sql` emits
+`psql:dump.sql:<line>: ERROR:`, and a pattern anchored to only one of them reports a clean restore for
+a failed one. The step-3 guards (`ON_ERROR_STOP`, `pipefail`) are what make that count trustworthy.
+Nothing else here is yours to assert.
 
 **Whether the application is correct on the new database is the developer's call, not this runbook's.**
 We move the bytes and prove the move did not error; only they know which rows matter, which behaviour
@@ -1023,7 +1035,7 @@ grep -q '^-- PostgreSQL database dump complete' dump.sql \
 # marker also catches a dump truncated by a disk filling up. pg_dump 15 against 15 needs no filtering; a host
 # pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
 psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
-errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
+errs="$(grep -cE '^(psql:.*)?ERROR' restore.log || true)"                    # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
 psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
 [ -s cron-active.txt ] && psql "$PG" -v ON_ERROR_STOP=1 -c "UPDATE cron.job SET active = true WHERE jobid IN ($(paste -sd, cron-active.txt))"
