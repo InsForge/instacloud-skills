@@ -143,7 +143,7 @@ Three things to get right as an agent:
    Checkout URL it answers has to be opened and paid by a person — that half is unconditional, so
    relay it verbatim and stop rather than reporting the domain as bought. Whether the ORDER needs
    approval first is the project's agent policy: `full_access`, which a new project starts on,
-   allows `domain.purchase` outright and you get the URL immediately; `branch_developer` answers
+   allows `domain.purchase` outright and you get the URL immediately; `branch_specific` answers
    `approval_required` (relay that line too); `read_only` refuses.
 2. **Nothing is registered before payment, and registrations are non-refundable.** A wrong name is
    real money, so read the quote back before ordering.
