@@ -978,7 +978,11 @@ must keep `JWT_SECRET` for both reasons. Read them from the file, never print th
 **Order matters three times.** (1) **Every source writer stops before EITHER snapshot is taken.** Step 2 of the
 ordered cutover applies here in full: the files and the database are two halves of one state, so an upload that
 lands between them is a row in the dump with no object behind it, and a delete is an orphan. `docker compose stop
-insforge postgrest deno` first; postgres itself stays up, because the dump reads it. (2) **Files before the dump,
+insforge postgrest deno` first; postgres itself stays up, because the dump reads it. **Stopping the containers is
+not the whole barrier here:** InsForge schedules are `pg_cron` jobs, and pg_cron fires *inside* postgres, the one
+container still running — so a schedule keeps writing across both snapshots unless you deactivate the jobs too.
+Deactivate them on the source, and reactivate exactly those on the target after the restore (the dump carries
+`cron.job` with its ids, and every row in it is inactive because you deactivated them before dumping). (2) **Files before the dump,
 inside that barrier:** bucket and object metadata live in `storage.buckets` / `storage.objects` and ride the dump,
 so a dump taken before the files are copied leaves the target listing nothing (measured; the restore had to be
 redone). (3) **PostgREST before the backend:** the backend needs `POSTGREST_BASE_URL` at boot and a compute service
@@ -990,6 +994,10 @@ The sequence, as measured (`<v>` = the source's `insforge-oss` tag; deploy the *
 ```bash
 # 0. the source stops writing, and its secrets are loaded into THIS shell (compose reads .env; your shell does not)
 docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
+src() { docker compose exec -T postgres psql -U postgres "${POSTGRES_DB:-insforge}" "$@"; }
+src -Atc 'select id from cron.job where active' > cron-active.txt   # …but pg_cron runs INSIDE postgres, so
+src -c 'update cron.job set active = false'                         # schedules would write across both snapshots
+# (rolling back to the source means re-running that update with `= true where id in (…)` there as well)
 envval() { sed -n "s/^$1=//p" .env | head -1; }      # no `source .env` — values are unquoted and would be executed
 JWT_SECRET="$(envval JWT_SECRET)"; ENCRYPTION_KEY="$(envval ENCRYPTION_KEY)"
 [ -n "$JWT_SECRET" ] || { echo 'no JWT_SECRET in .env — wrong directory?' >&2; exit 1; }
@@ -1060,6 +1068,8 @@ psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0
 errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
 psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
+[ -s cron-active.txt ] && psql "$PG" -c "UPDATE cron.job SET active = true WHERE id IN ($(paste -sd, cron-active.txt))"
+                                                                             # step 0 deactivated these; ids travel in the dump
 
 # 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
 insta --agent deploy --image postgrest/postgrest:v12.2.12 --port 3000 --group postgrest
