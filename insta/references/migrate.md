@@ -942,11 +942,130 @@ fly ssh console -a <app> -C 'printenv <NAME>' | tr -d '\r\n' | insta --agent sec
 And never run the `printenv` on its own to "check" a value first; that is the leak. If you cannot
 pipe, have the user re-enter the value instead.
 
+**InsForge (self-hosted).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
+`postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
+built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
+database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
+2026-09-14** (`insforge-oss` v2.3.2, source PG 15.13.4 → insta pg 16.15): every command below ran; the hosted API
+then served the migrated rows, the migrated users with their original passwords, and the migrated files. **Not
+measured:** the Deno functions host — compose mounts `functions/` into a stock Deno image, so there is no published
+image to `deploy --image`; build one from `deploy/Dockerfile.deno` with `insta --agent deploy <dir>` if the app uses
+functions, else leave `DENO_RUNTIME_URL` at a placeholder — and PostgREST is on a **public** URL here, JWT-gated with
+`anon` as the fallback role (Supabase's posture, not InsForge's compose default).
+
+*Why managed postgres and not InsForge's own image:* compute exposes HTTP only, so a postgres container on compute is
+unreachable by its siblings. Managed pg 16 covers what InsForge needs, measured on staging: the DSN's role is
+**superuser** with CREATEROLE, `pg_cron` is in `shared_preload_libraries` with `cron.database_name` = your database,
+`CREATE EXTENSION` works for `pgcrypto`, `http`, `pg_cron` (`vector` preinstalled), event triggers and
+`ALTER DATABASE … SET` work, LISTEN/NOTIFY works, and the client **must** speak TLS (SNI-routed lane; `sslmode=disable`
+lands on the wrong instance). The one thing it lacks is InsForge's `insforge_pg_utils` preload hook, which lets the
+non-owner `project_admin` role manage RLS policies on InsForge's own tables and run `CREATE EXTENSION`. RLS behaved
+**identically** without it; `CREATE EXTENSION` through InsForge's SQL endpoint returned
+`403 permission denied to create extension`. `ALTER ROLE project_admin SUPERUSER` closes that (measured; `GRANT
+CREATE ON DATABASE` covers trusted extensions only), and is the right call here — the DSN is superuser regardless.
+
+**The four secrets travel.** `JWT_SECRET`, `ENCRYPTION_KEY`, `ACCESS_API_KEY`, `ACCESS_ANON_KEY` from the source
+`.env` go onto the target **verbatim**: sessions stay valid, `system.secrets` (JWT keypair, API keys) decrypts, the
+app's anon key is unchanged. `ENCRYPTION_KEY` falls back to `JWT_SECRET` when unset, so a source that never set it
+must keep `JWT_SECRET` for both reasons. Read them from the file, never print them.
+
+**Order matters twice.** (1) **Files before the dump:** bucket and object metadata live in `storage.buckets` /
+`storage.objects` and ride the dump, so a dump taken before the files are copied leaves the target listing nothing
+(measured; the restore had to be redone). (2) **PostgREST before the backend:** the backend needs
+`POSTGREST_BASE_URL` at boot and a compute service has no URL until its first deploy.
+
+The sequence, as measured (`<v>` = the source's `insforge-oss` tag; deploy the **same** version — the dump carries
+`system.migrations`, and a newer image would run further migrations on boot, an older one would refuse):
+
+```bash
+# services
+insta --agent services add postgres db
+insta --agent services add storage files
+insta --agent services add compute api --port 7130 --always-on --volume 10   # volume: logs, local-disk fallback
+insta --agent services add compute postgrest --port 3000 --always-on
+
+# 1. initialise the managed database the way InsForge's postgres image does on first boot
+PG="$(insta --agent db url --group db)"
+psql "$PG" -X -v ON_ERROR_STOP=1 -f deploy/docker-init/db/db-init.sql     # roles anon/authenticated/project_admin,
+                                                                           # grants, 2 event triggers: 15 stmts, 0 errors
+# jwt.sql says `ALTER DATABASE postgres SET …`. A managed instance HAS a database named postgres, so verbatim it
+# SUCCEEDS SILENTLY against the wrong database (measured). Retarget it to the current one:
+{ echo 'SELECT current_database() AS dbname \gset'
+  sed 's/ALTER DATABASE postgres /ALTER DATABASE :"dbname" /' deploy/docker-init/db/jwt.sql
+} | JWT_SECRET="$JWT_SECRET" JWT_EXP=3600 psql "$PG" -X -v ON_ERROR_STOP=1 -f -
+# postgresql.conf cannot be mounted; its GUCs become per-database settings, same values as the conf:
+DB="$(psql "$PG" -Atc 'select current_database()')"
+psql "$PG" -v ON_ERROR_STOP=1 \
+  -c "ALTER DATABASE \"$DB\" SET app.encryption_key TO '$ENCRYPTION_KEY'" \
+  -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_role TO 'project_admin'" \
+  -c "ALTER DATABASE \"$DB\" SET insforge.extension_grant_role TO 'project_admin'" \
+  -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_tables TO '<value from postgresql.conf>'" \
+  -c "ALTER DATABASE \"$DB\" SET insforge.internal_schemas TO '<value from postgresql.conf>'" \
+  -c "ALTER ROLE project_admin SUPERUSER"                                  # stands in for insforge_pg_utils
+
+# 2. secrets and bindings (values from the source .env, from stdin — never as arguments)
+for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD; do
+  grep "^$n=" .env | cut -d= -f2- | insta --agent secrets set "$n" --service compute/api
+done
+insta --agent secrets bind PGRST_DB_URI postgres/db --to compute/postgrest   # PostgREST takes the DSN as-is (sslmode inside)
+grep '^JWT_SECRET=' .env | cut -d= -f2- | insta --agent secrets set PGRST_JWT_SECRET --service compute/postgrest
+insta --agent secrets set PGRST_DB_SCHEMA public --service compute/postgrest # + PGRST_DB_ANON_ROLE anon, PGRST_DB_POOL 50,
+                                          # PGRST_DB_CHANNEL_ENABLED true, PGRST_DB_CHANNEL pgrst, PGRST_SERVER_PORT 3000: copy the compose file
+insta --agent secrets bind DATABASE_URL postgres/db --to compute/api        # its bootstrap scripts read this…
+# …but the runtime reads POSTGRES_HOST/PORT/DB/USER/PASSWORD. Split the DSN in-process, never print it:
+python3 - "$PG" <<'PY2' | while IFS== read -r k v; do printf '%s' "$v" | insta --agent secrets set "$k" --service compute/api; done
+import sys, urllib.parse as u; d = u.urlsplit(sys.argv[1])
+for k, v in (("POSTGRES_HOST", d.hostname), ("POSTGRES_PORT", d.port or 5432), ("POSTGRES_DB", d.path.lstrip("/")),
+             ("POSTGRES_USER", u.unquote(d.username or "")), ("POSTGRES_PASSWORD", u.unquote(d.password or ""))): print(f"{k}={v}")
+PY2
+insta --agent secrets set PGSSLMODE require --service compute/api           # node-postgres reads it; the lane requires TLS
+insta --agent secrets bind S3_ACCESS_KEY_ID     storage/files --source-name AWS_ACCESS_KEY_ID     --to compute/api
+insta --agent secrets bind S3_SECRET_ACCESS_KEY storage/files --source-name AWS_SECRET_ACCESS_KEY --to compute/api
+insta --agent secrets bind S3_BUCKET            storage/files --source-name BUCKET_NAME           --to compute/api
+insta --agent secrets bind S3_ENDPOINT_URL      storage/files --source-name AWS_ENDPOINT_URL_S3   --to compute/api
+insta --agent secrets bind S3_REGION            storage/files --source-name AWS_REGION            --to compute/api
+insta --agent secrets set S3_FORCE_PATH_STYLE true --service compute/api
+insta --agent secrets set S3_USE_PRESIGNED_URLS true --service compute/api
+insta --agent secrets set DENO_RUNTIME_URL http://deno.invalid:7133 --service compute/api   # or the functions service URL
+insta --agent secrets set INSFORGE_TELEMETRY_DISABLED 1 --service compute/api
+
+# 3. files FIRST: out of the source volume, into the bucket under InsForge's key layout ${APP_KEY:-local}/<bucket>/<key>
+docker compose cp insforge:/insforge-storage/. ./storage-data/               # on disk: <bucket>/<key>
+eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
+  '"export AWS_ACCESS_KEY_ID=\(.S3_ACCESS_KEY_ID|@sh) AWS_SECRET_ACCESS_KEY=\(.S3_SECRET_ACCESS_KEY|@sh) S3_BUCKET=\(.S3_BUCKET|@sh) S3_ENDPOINT_URL=\(.S3_ENDPOINT_URL|@sh)"')"
+aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
+
+# 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
+docker compose stop insforge postgrest deno                                  # writers off; postgres stays up for the dump
+docker compose exec -T postgres pg_dump -U postgres insforge > dump.sql      # pg_dump 15 against 15: nothing to filter
+# a host pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
+psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log
+grep -c '^psql:.*ERROR' restore.log                                          # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
+psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
+
+# 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
+insta --agent deploy --image postgrest/postgrest:v12.2.12 --port 3000 --group postgrest
+insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from services list>" --service compute/api
+insta --agent deploy --image ghcr.io/insforge/insforge-oss:<v> --port 7130 --group api   # boots, `migrate:up` finds the ledger complete
+insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/api   # + VITE_API_BASE_URL, same value
+insta --agent compute restart api
+```
+
+*Pass:* `GET /api/health` → `{"status":"ok","version":"<v>"}`; admin login 200; `GET /api/database/tables` lists the
+source's tables; the rows read with the anon key; a migrated user logs in with the **original** password;
+`storage.objects` row count equals the objects under `local/` in the bucket; a public object downloads anonymously
+(302 to a presigned URL), a private one is 401 anonymous and 200 with a session; `system.migrations` counts match.
+Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged. If step 1 of the ordered cutover
+proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
+`PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
+measured annoyances: InsForge admin tokens expire after 900 s (`"Invalid token"` on reuse), and PostgREST's schema
+cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
+
 > **Verified as of 2026-09-09**, by executing this runbook against a throwaway project with a seeded
 > Postgres: the cutover ordering, the guard behaviour in step 3, `start` not re-resolving env, the
 > `secrets set` stdin/argument asymmetry, and the refusal messages quoted above. **Not verified:** any
-> end-to-end migration from a real source platform, the portless-worker path, and object-storage or
-> volume data movement.
+> end-to-end migration from Render, Railway, Fly or Heroku itself, the portless-worker path, and volume data
+> movement. (The self-hosted InsForge path above was migrated end to end, files included, on 2026-09-14.)
 >
 > **The pg18→pg16 downgrade in step 3 is verified end to end** against a seeded PG 18.6 source and a
 > real InstaCloud PG 16.15 target: restore exited 0 with empty stderr, and a catalog and data diff
