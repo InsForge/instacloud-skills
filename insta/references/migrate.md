@@ -23,20 +23,26 @@ insta --agent setup agent --env <that env> -y       # NEVER bare
 
 `--env` defaults to **prod**, and its own help says "switches and persists, like `insta env use`"
 (`cli/src/index.ts`). `setup.ts` is explicit about what that costs: the switch "goes through
-`env use` — the one path that persists the choice and **drops the now-foreign session**". So a bare
-`insta setup agent` on a staging machine logs the whole machine out of staging, for every project,
-and only a human can restore it with a browser flow. **That turns a one-project session error into
-a machine-wide outage** — measured, on this machine, during the validation run this file came from.
-If the login itself is gone (`insta --agent env` shows `user: (not logged in)`, and commands return
-`unauthorized (HTTP 401)`), you cannot fix it: relay `insta login` to a human and stop.
+`env use` — the one path that persists the choice and **drops the now-foreign session**". So
+`insta --agent setup agent` with no `--env` on a staging machine logs the whole machine out of
+staging, for every project. **That turns a one-project session error into a machine-wide outage** —
+measured, on this machine, during the validation run this file came from.
+If the login itself is gone (`insta --agent status` shows `user: (not logged in)` — `env` prints no
+login state — and commands return `unauthorized (HTTP 401)`), you can log back in yourself only if
+you were handed credentials: `insta --agent login --api-key "$INSTA_API_KEY"` (an `insta_` token) or
+`insta --agent login --email <email>` with `$INSTA_PASSWORD` set. Every other mode (`--device`, bare
+`login`) needs a human at a browser: relay `insta login` and stop.
 **Never remove `--agent` to get past a governance refusal**; relay the approval command to a human
 admin and retry the unchanged request.
 
-**A stateless app is a supported shape, and the cutover is shorter for it.** Steps 2, 3 and 4 are
+**A stateless app is a supported shape, and the cutover is shorter for it.** Steps 3 and 4 are
 entirely Postgres and their pass conditions are `psql` diffs. An app with no database migrates in
-steps 0, 1, 5, 6 and 7, dropping `services add postgres`, `secrets bind` and the psql lines from
-step 1. Read literally the ordering below cannot be completed without a database; that is a gap in
-the writing, not a claim the app is unsupported.
+steps 0, 1, 2, 5, 6 and 7, dropping `services add postgres`, `secrets bind` and the psql lines from
+step 1. Step 2 stays: it is the writer barrier, not a Postgres check, and "no database" rarely means
+"no state" — a worker posting to a third-party API or a cron sending mail is still a writer, so stop
+the source's workers and cron (and the target's proving deploy) before cutting traffic. Read
+literally the ordering below cannot be completed without a database; that is a gap in the writing,
+not a claim the app is unsupported.
 
 ## The ordered cutover
 
@@ -93,7 +99,7 @@ step and a mystery 400 after the cutover. Open the app's settings and answer two
   `RENDER_EXTERNAL_HOSTNAME`), or a literal you must edit (Fly's `.fly.dev`, Heroku's fallback
   list)? See the per-source table in the Render section for what each platform's apps actually do.
 
-**`insta build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
+**`insta --agent build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
 offline, no login. It prints the builder, the detected install/build/start commands, the port and
 why, and the Dockerfile nixpacks would generate — and it **exits 1 on a repo that has no detectable
 start command**, which is the celery blocker, before you touch the platform. **Caveat, measured:**
@@ -136,8 +142,8 @@ regressions against the buildpack the app came from.
   `WORKDIR /app/`, so a binary reading data files relative to cwd keeps working — measured on a Go
   app whose `LoadHTMLGlob("resources/*.templ.html")` panics if the glob misses. That is *why*
   buildpack-era apps survive with no Dockerfile, and it also means production images ship source
-  and build scripts. Write the idiomatic multi-stage Dockerfile that copies only the binary and
-  that app panics on boot **with a green TCP check**. The image also carries
+  and build scripts. Write the idiomatic multi-stage Dockerfile that copies only the binary, and
+  that same app panics on boot, **with a green TCP check** masking it. The image also carries
   **`/app/.nixpacks/Dockerfile`**, which is the best post-hoc build audit available: base images,
   nixpkgs rev, build and start commands, copy semantics, in one `exec`.
 
@@ -174,7 +180,7 @@ condition is unreachable rather than failing.
 **Do not stop at the `error` string — it is not diagnostic.** All you get is
 `build <id> failed: build command failed`, and there is no build-log surface at all
 (`logs … --deploy` answers `operations unavailable (insta-compute 404: not found)` because no
-machine ever existed). **Reproduce locally to learn why:** `insta build <dir>`, then
+machine ever existed). **Reproduce locally to learn why:** `insta --agent build <dir>`, then
 `nixpacks build <dir>` for the full output. That is how the celery cause (no detectable start
 command) was found.
 
@@ -188,7 +194,7 @@ the nixpacks type "only `context_path` is configurable" — so no choice of lane
 a build fails, fix the repo (a `Procfile`, a version pin, a committed `Dockerfile`), not the
 transport.
 
-**Which lane. `insta deploy <dir>` is now the migration default, on every plane.** The archive
+**Which lane. `insta --agent deploy <dir>` is now the migration default, on every plane.** The archive
 lane shipped (insta-cli#197, and the `source-build` discovery endpoint is on platform main and on
 prod), and it changes the answer this file used to give. Measured on staging, 2026-09-11: a
 Dockerfile-less `render-examples/express-hello-world` checkout, `insta --agent deploy . --port 3000`,
@@ -551,7 +557,8 @@ psql "$T" -At -F'|' -c "select schemaname||'.'||indexname, indexdef from pg_inde
       where schemaname not in ('pg_catalog','information_schema') order by 1"
 psql "$T" -At -F'|' -c "select format('%I.%I(%s)', n.nspname, p.proname,
                                      pg_get_function_identity_arguments(p.oid)),
-             case when p.prorettype = 'trigger'::regtype then 'trigger' else 'callable' end
+             case when p.prorettype in ('trigger'::regtype, 'event_trigger'::regtype)
+                  then 'trigger' else 'callable' end
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname not in ('pg_catalog','information_schema')
         and not exists (select 1 from pg_depend d
@@ -578,8 +585,10 @@ An agent facing that either escalates for nothing or learns to ignore the check.
 
 Then **call every function the third query lists, once** — their bodies were never parsed during the
 restore, so this is the only thing that catches PG17/18 SQL inside them. **Except those marked
-`trigger`:** calling one directly fails with `trigger functions can only be called as triggers`.
-Exercise those with DML against the table whose trigger owns them.
+`trigger`:** calling one directly fails with `trigger functions can only be called as triggers`
+(event-trigger functions are marked the same way, and fail the same way). Exercise a row trigger's
+function with DML against its table, and an event trigger's with the DDL its `pg_event_trigger` row
+names in `evtevent`.
 *Pass:* the per-table count diff is **empty** (every table, exact, both sides); latest rows match;
 sequences at or above the source's; extension sets reconciled as a **subset** (source minus target empty — a plain diff is non-empty on every migration, since the target always carries the preinstalled ones);
 after a downgrade, constraints validated, `indexdef`s equal, and every function callable.
@@ -712,10 +721,10 @@ command you already have:
 | `databases: [{name: X}]` | `insta --agent services add postgres X` |
 | `databases[].diskSizeGB` | nothing to do: database disk sizing is not addressable here |
 | `services: [{type: web, name: X}]` | `insta --agent services add compute X --port <n>`. `--port` is optional and stores **`null`**, not `8080`; the 8080 default is applied at *deploy* time. Pass it anyway, and pass it again on `connect-repo` (see above) |
-| **nixpacks finds no start command** | **the repo has no `connect-repo` route at all** — every service connected to it fails identically with `build <id> failed: build command failed`, web services included. Measured on `render-examples/celery`, whose three roles live only in their `startCommand:`. Catch it with `insta build <dir>` before touching the platform. **The cheap fix is a `Procfile`, not a Dockerfile** — but nixpacks honours exactly **one** entry (`web:` beats `worker:`), so one repo/root-dir yields one image and one start command for *every* service connected to it. Differentiating roles needs `--root-dir` per role, a Dockerfile per directory, or `deploy --image` per role |
-| `type: worker` | a second compute service. **Portless is prebuilt-image-only**, so read the worker notes below before promising it: `services add compute X --port 0` and `connect-repo … --port 0` are both **rejected** (`port must be an integer between 1 and 65535, got: 0`), while `insta --agent deploy --image <ref> --port 0` is **accepted** and is the only path. A repo whose worker identity *is* its `startCommand`, with no Dockerfile, has **no route** on insta-compute: `connect-repo` cannot set commands ("Build and start commands come from detection and cannot be set") and `deploy <dir>` is refused on this plane. Say so rather than improvising |
+| **nixpacks finds no start command** | **the repo has no `connect-repo` route at all** — every service connected to it fails identically with `build <id> failed: build command failed`, web services included. Measured on `render-examples/celery`, whose three roles live only in their `startCommand:`. Catch it with `insta --agent build <dir>` before touching the platform. **The cheap fix is a `Procfile`, not a Dockerfile** — but nixpacks honours exactly **one** entry (`web:` beats `worker:`), so one repo/root-dir yields one image and one start command for *every* service connected to it. Differentiating roles needs `--root-dir` per role, a Dockerfile per directory, or `deploy --image` per role |
+| `type: worker` | a second compute service. **Portless is prebuilt-image-only**, so read the worker notes below before promising it: `services add compute X --port 0` and `connect-repo … --port 0` are both **rejected** (`port must be an integer between 1 and 65535, got: 0`), while `insta --agent deploy --image <ref> --port 0` is **accepted** and is the only path. A repo whose worker identity *is* its `startCommand`, with no Dockerfile, has **no route through `connect-repo`** ("Build and start commands come from detection and cannot be set"). Since the archive lane it has one through the local checkout: write a `Dockerfile` whose `CMD` is the worker command and `insta --agent deploy <dir>` it — that lane builds on every plane now. Whether `deploy <dir>` accepts `--port 0` is **unmeasured** (only `deploy --image --port 0` is), so test it before promising a portless worker. Say what you measured rather than improvising |
 | `type: cron` | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
-| `type: pserv` (private service) | a compute service, but **flag it to the user**: `insta --agent services add` assigns a default domain to every compute service, so a Render private service stops being unreachable from the internet |
+| `type: pserv` (private service) | a compute service, but **flag it to the user**: every compute service gets a public default domain with its first successful deploy (step 1 above; `services add` alone leaves `domain: null`), so a Render private service stops being unreachable from the internet |
 | `runtime: python` / `node` / `ruby` / `go` (any non-`image`; older blueprints spell it `env:`) | `insta --agent compute connect-repo <owner/repo> X` — nixpacks does what the buildpack did |
 | `buildCommand:` | **nixpacks does not run the script**, but do not assume nothing in it happens: its Django provider runs `manage.py migrate` itself at start (measured — a full `admin, auth, contenttypes, sessions` migrate ran against the bound insta pg16 with no instruction from us). The **asset** half is what it skips, so read the script and re-home anything else: `collectstatic` or an `npm run build` needs a `Dockerfile` or nixpacks' own detected build step. A migration you want under your control rather than run at every boot belongs in `insta --agent compute exec` |
 | `startCommand:` | nixpacks picks its own, which is often not this one. If the app needs a specific server invocation (`gunicorn mysite.asgi:application -k uvicorn.workers.UvicornWorker`, a `-w` count, an ASGI vs WSGI entrypoint), that is a `Dockerfile` `CMD`, so this row can turn the whole service into the Dockerfile lane |
@@ -728,7 +737,7 @@ command you already have:
 | `maxmemoryPolicy:` on a redis | no insta knob. Render's own queue examples set `noeviction` deliberately, so tell the user their queue's eviction behaviour is not reproducible here |
 | `ipAllowList: []` on a datastore | no insta knob, and the default runs the **other way**: a provisioned redis came back `public=true`. A Render datastore restricted to internal connections becomes publicly addressable here, so flag it like the `pserv` row |
 | `envVarGroups:` | **not returned by the env-vars API** (see below); resolve these from the dashboard |
-| `disk: {mountPath, sizeGB}` | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>` later. **The disk appears when the machine is next created, so `insta --agent compute restart X` is enough — no rebuild.** Measured twice on a running volumeless service: attach, restart only, and `/data` is mounted; the platform labels that event `wake`, not `deploy`, which is the mechanism. A volume attached *before* the first deploy is present on that first deploy. (Both this file and the CLI's own string said "the next deploy"; on a nixpacks service that difference is a 10-second restart versus a full rebuild.) **Do not mirror Render's `sizeGB`:** attach at the free 10Gi cap, because growing is paid-plan-only even from 1Gi to 2Gi and shrinking is impossible, so a literal small size is a one-way door |
+| `disk: {mountPath, sizeGB}` | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>` later. **The disk appears when the machine is next created, so `insta --agent compute restart X` is enough — no rebuild.** Measured twice on a running volumeless service: attach, restart only, and `/data` is mounted; the platform labels that event `wake`, not `deploy`, which is the mechanism. A volume attached *before* the first deploy is present on that first deploy. (The other skill files now say "deploy or restart"; the CLI's own string still says "the next deploy", which is true but not the cheapest path — on a nixpacks service that difference is a 10-second restart versus a full rebuild.) **Do not mirror Render's `sizeGB`:** attach at the free 10Gi cap, because growing is paid-plan-only even from 1Gi to 2Gi and shrinking is impossible, so a literal small size is a one-way door |
 | `disk` holding **user uploads** | the volume is usually the wrong tool: prefer `insta --agent services add storage <n>` plus an S3 upload provider (see the addon table), which is the only option that survives scale-out. If you keep the volume, the path fix must be **in the image** — a `Dockerfile` symlink to `/data` — because a symlink made with `compute exec` is wiped on the next restart (measured). Check whether the framework can be pointed at the mount instead (Strapi: `server.dirs.public`), and note a fresh volume contains only `lost+found`, so a framework that requires its upload directory to pre-exist will crashloop until you create it |
 | `healthCheckPath` | not a knob here; insta health-checks the port |
 | `numInstances` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |

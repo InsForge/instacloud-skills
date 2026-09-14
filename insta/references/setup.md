@@ -99,13 +99,13 @@ postgres + one storage at create):
 insta --agent services add postgres db        # relational DB (size it with insta --agent db limits)
 insta --agent services add storage files     # S3-compatible bucket
 insta --agent services add compute api       # your container; add --volume 1Gi now, or attach later
-insta --agent compute volume api --size 1Gi  # later attach/grow persistent /data; mounts on next deploy
+insta --agent compute volume api --size 1Gi  # later attach/grow persistent /data; mounts on next deploy or `compute restart`
 insta --agent services list --json
 ```
 
 Compute volumes are **not create-time only**. Use `--volume <Gi>` when adding a compute service if
 you already know it needs durable `/data`, or run `insta --agent compute volume <service> --size <Gi>` later
-on a volumeless service to attach one. The volume appears on the next deploy/redeploy.
+on a volumeless service to attach one. The volume appears when the machine is next created: the next deploy, or `insta --agent compute restart` (measured; no rebuild needed).
 
 Up to 5 services per type. Provider credentials are minted under the service that owns them with
 canonical names (`DATABASE_URL`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `REDIS_URL`, `MYSQL_URL`,
