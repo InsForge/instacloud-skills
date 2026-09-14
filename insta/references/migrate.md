@@ -993,7 +993,8 @@ psql "$PG" -v ON_ERROR_STOP=1 \
   -c "ALTER ROLE project_admin SUPERUSER"                                  # stands in for insforge_pg_utils
 
 # 2. secrets and bindings (values from the source .env, from stdin — never as arguments)
-for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD; do
+for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD \
+         FLY_API_TOKEN FLY_ORG; do                  # the last two: see the compute note below. Absent ones skip.
   v="$(envval "$n")"; [ -n "$v" ] || continue     # a name absent from .env must stay absent here: setting an EMPTY
   printf '%s' "$v" | insta --agent secrets set "$n" --service compute/api   # ENCRYPTION_KEY defeats its own
 done                                              # fallback to JWT_SECRET and breaks system.secrets decryption
@@ -1077,13 +1078,20 @@ with a session, sha256 equal to source.
 
 Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged.
 
-**Ask where the app itself runs, because for some users it was on the machine you just told them to stop.**
-A self-hosted InsForge can host apps: `providers/compute/docker.provider.ts` runs containers through a mounted
-Docker socket, and `providers/deployments/vercel.provider.ts` pushes frontends. A user whose frontend sits on
-Vercel or Netlify changes `baseUrl` and is done. A user who deployed **through** their InsForge has nothing left
-serving once the source stops. That case is **optional extra work, not part of the migration**, and it is a
-compute service like any other: `insta --agent deploy <dir> --port <n>` from the app's checkout, then point its
-own `baseUrl` at the api host. Offer it, do not assume it, and do not let it delay the cutover. If step 1 of the ordered cutover
+**Ask where the app itself runs.** A self-hosted InsForge can host apps three ways, and the answer changes what
+you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
+their own machine. `providers/compute/fly.provider.ts` runs them in the user's **own Fly account** — its comment
+says self-hosters enable compute by setting `FLY_API_TOKEN` and `FLY_ORG`, which is why those two are in the
+secret loop above. `providers/deployments/vercel.provider.ts` pushes frontends.
+
+Carry `FLY_API_TOKEN` and `FLY_ORG` when they exist. Those machines belong to the user, the `compute` schema rows
+that reference them ride the dump, and without the token the new backend can see the rows but cannot manage the
+machines. The source is stopped, so only one InsForge is ever driving that Fly account.
+
+The Docker-socket case is the one with work left: those containers were on the machine the migration stops, so
+nothing is left serving them. That is **optional work after the migration, not part of it** — a compute service
+like any other, `insta --agent deploy <dir> --port <n>` from the app's checkout. Offer it, do not assume it, and
+do not let it delay the cutover. If step 1 of the ordered cutover
 proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
 `PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
 measured annoyances: InsForge admin tokens expire after 900 s (`"Invalid token"` on reuse), and PostgREST's schema
