@@ -962,22 +962,38 @@ lands on the wrong instance). The one thing it lacks is InsForge's `insforge_pg_
 non-owner `project_admin` role manage RLS policies on InsForge's own tables and run `CREATE EXTENSION`. RLS behaved
 **identically** without it; `CREATE EXTENSION` through InsForge's SQL endpoint returned
 `403 permission denied to create extension`. `ALTER ROLE project_admin SUPERUSER` closes that (measured; `GRANT
-CREATE ON DATABASE` covers trusted extensions only), and is the right call here — the DSN is superuser regardless.
+CREATE ON DATABASE` covers trusted extensions only). **Say what it costs before you do it:** `project_admin` is the
+role InsForge runs admin SQL and its dashboard SQL editor as, so making it superuser means anything that can execute
+SQL through that path bypasses RLS and every other privilege check — the hook exists precisely to avoid that on a
+shared box. Here the connection string insta hands you is already superuser, so the escalation adds no reachable
+privilege that the operator did not already hold, and a project that never installs extensions can simply skip this
+line and keep `project_admin` unprivileged. There is no narrower supported alternative today: the hook is a
+compiled preload library and managed instances cannot load one.
 
 **The four secrets travel.** `JWT_SECRET`, `ENCRYPTION_KEY`, `ACCESS_API_KEY`, `ACCESS_ANON_KEY` from the source
 `.env` go onto the target **verbatim**: sessions stay valid, `system.secrets` (JWT keypair, API keys) decrypts, the
 app's anon key is unchanged. `ENCRYPTION_KEY` falls back to `JWT_SECRET` when unset, so a source that never set it
 must keep `JWT_SECRET` for both reasons. Read them from the file, never print them.
 
-**Order matters twice.** (1) **Files before the dump:** bucket and object metadata live in `storage.buckets` /
-`storage.objects` and ride the dump, so a dump taken before the files are copied leaves the target listing nothing
-(measured; the restore had to be redone). (2) **PostgREST before the backend:** the backend needs
-`POSTGREST_BASE_URL` at boot and a compute service has no URL until its first deploy.
+**Order matters three times.** (1) **Every source writer stops before EITHER snapshot is taken.** Step 2 of the
+ordered cutover applies here in full: the files and the database are two halves of one state, so an upload that
+lands between them is a row in the dump with no object behind it, and a delete is an orphan. `docker compose stop
+insforge postgrest deno` first; postgres itself stays up, because the dump reads it. (2) **Files before the dump,
+inside that barrier:** bucket and object metadata live in `storage.buckets` / `storage.objects` and ride the dump,
+so a dump taken before the files are copied leaves the target listing nothing (measured; the restore had to be
+redone). (3) **PostgREST before the backend:** the backend needs `POSTGREST_BASE_URL` at boot and a compute service
+has no URL until its first deploy.
 
 The sequence, as measured (`<v>` = the source's `insforge-oss` tag; deploy the **same** version — the dump carries
 `system.migrations`, and a newer image would run further migrations on boot, an older one would refuse):
 
 ```bash
+# 0. the source stops writing, and its secrets are loaded into THIS shell (compose reads .env; your shell does not)
+docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
+envval() { sed -n "s/^$1=//p" .env | head -1; }      # no `source .env` — values are unquoted and would be executed
+JWT_SECRET="$(envval JWT_SECRET)"; ENCRYPTION_KEY="$(envval ENCRYPTION_KEY)"
+[ -n "$JWT_SECRET" ] || { echo 'no JWT_SECRET in .env — wrong directory?' >&2; exit 1; }
+
 # services
 insta --agent services add postgres db
 insta --agent services add storage files
@@ -996,7 +1012,7 @@ psql "$PG" -X -v ON_ERROR_STOP=1 -f deploy/docker-init/db/db-init.sql     # role
 # postgresql.conf cannot be mounted; its GUCs become per-database settings, same values as the conf:
 DB="$(psql "$PG" -Atc 'select current_database()')"
 psql "$PG" -v ON_ERROR_STOP=1 \
-  -c "ALTER DATABASE \"$DB\" SET app.encryption_key TO '$ENCRYPTION_KEY'" \
+  -c "ALTER DATABASE \"$DB\" SET app.encryption_key TO '${ENCRYPTION_KEY:-$JWT_SECRET}'" \
   -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_role TO 'project_admin'" \
   -c "ALTER DATABASE \"$DB\" SET insforge.extension_grant_role TO 'project_admin'" \
   -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_tables TO '<value from postgresql.conf>'" \
@@ -1005,8 +1021,9 @@ psql "$PG" -v ON_ERROR_STOP=1 \
 
 # 2. secrets and bindings (values from the source .env, from stdin — never as arguments)
 for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD; do
-  grep "^$n=" .env | cut -d= -f2- | insta --agent secrets set "$n" --service compute/api
-done
+  v="$(envval "$n")"; [ -n "$v" ] || continue     # a name absent from .env must stay absent here: setting an EMPTY
+  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/api   # ENCRYPTION_KEY defeats its own
+done                                              # fallback to JWT_SECRET and breaks system.secrets decryption
 insta --agent secrets bind PGRST_DB_URI postgres/db --to compute/postgrest   # PostgREST takes the DSN as-is (sslmode inside)
 grep '^JWT_SECRET=' .env | cut -d= -f2- | insta --agent secrets set PGRST_JWT_SECRET --service compute/postgrest
 insta --agent secrets set PGRST_DB_SCHEMA public --service compute/postgrest # + PGRST_DB_ANON_ROLE anon, PGRST_DB_POOL 50,
@@ -1029,18 +1046,19 @@ insta --agent secrets set S3_USE_PRESIGNED_URLS true --service compute/api
 insta --agent secrets set DENO_RUNTIME_URL http://deno.invalid:7133 --service compute/api   # or the functions service URL
 insta --agent secrets set INSFORGE_TELEMETRY_DISABLED 1 --service compute/api
 
-# 3. files FIRST: out of the source volume, into the bucket under InsForge's key layout ${APP_KEY:-local}/<bucket>/<key>
+# 3. files FIRST (writers already stopped in step 0): out of the source volume, into the bucket under InsForge's
+#    key layout ${APP_KEY:-local}/<bucket>/<key>
 docker compose cp insforge:/insforge-storage/. ./storage-data/               # on disk: <bucket>/<key>
 eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
   '"export AWS_ACCESS_KEY_ID=\(.S3_ACCESS_KEY_ID|@sh) AWS_SECRET_ACCESS_KEY=\(.S3_SECRET_ACCESS_KEY|@sh) S3_BUCKET=\(.S3_BUCKET|@sh) S3_ENDPOINT_URL=\(.S3_ENDPOINT_URL|@sh)"')"
 aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
 
 # 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
-docker compose stop insforge postgrest deno                                  # writers off; postgres stays up for the dump
 docker compose exec -T postgres pg_dump -U postgres insforge > dump.sql      # pg_dump 15 against 15: nothing to filter
 # a host pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
-psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log
-grep -c '^psql:.*ERROR' restore.log                                          # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
+psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
+errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
+[ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
 psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
 
 # 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
