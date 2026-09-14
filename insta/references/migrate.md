@@ -982,7 +982,7 @@ insforge postgrest deno` first; postgres itself stays up, because the dump reads
 not the whole barrier here:** InsForge schedules are `pg_cron` jobs, and pg_cron fires *inside* postgres, the one
 container still running — so a schedule keeps writing across both snapshots unless you deactivate the jobs too.
 Deactivate them on the source, and reactivate exactly those on the target after the restore (the dump carries
-`cron.job` with its ids, and every row in it is inactive because you deactivated them before dumping). (2) **Files before the dump,
+`cron.job` with its `jobid`s, and every row in it is inactive because you deactivated them before dumping). (2) **Files before the dump,
 inside that barrier:** bucket and object metadata live in `storage.buckets` / `storage.objects` and ride the dump,
 so a dump taken before the files are copied leaves the target listing nothing (measured; the restore had to be
 redone). (3) **PostgREST before the backend:** the backend needs `POSTGREST_BASE_URL` at boot and a compute service
@@ -992,15 +992,18 @@ The sequence, as measured (`<v>` = the source's `insforge-oss` tag; deploy the *
 `system.migrations`, and a newer image would run further migrations on boot, an older one would refuse):
 
 ```bash
-# 0. the source stops writing, and its secrets are loaded into THIS shell (compose reads .env; your shell does not)
-docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
-src() { docker compose exec -T postgres psql -U postgres "${POSTGRES_DB:-insforge}" "$@"; }
-src -Atc 'select id from cron.job where active' > cron-active.txt   # …but pg_cron runs INSIDE postgres, so
-src -c 'update cron.job set active = false'                         # schedules would write across both snapshots
-# (rolling back to the source means re-running that update with `= true where id in (…)` there as well)
+# 0. read .env FIRST (compose reads it automatically; your shell does not, and everything below needs it), then
+#    stop every source writer
 envval() { sed -n "s/^$1=//p" .env | head -1; }      # no `source .env` — values are unquoted and would be executed
 JWT_SECRET="$(envval JWT_SECRET)"; ENCRYPTION_KEY="$(envval ENCRYPTION_KEY)"
+SRC_DB="$(envval POSTGRES_DB)"; SRC_DB="${SRC_DB:-insforge}"   # compose's own default; NOT necessarily `insforge`
 [ -n "$JWT_SECRET" ] || { echo 'no JWT_SECRET in .env — wrong directory?' >&2; exit 1; }
+docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
+src() { docker compose exec -T postgres psql -U postgres "$SRC_DB" -v ON_ERROR_STOP=1 "$@"; }   # stop on SQL error:
+src -Atc 'select jobid from cron.job where active' > cron-active.txt   # psql exits 0 on one otherwise, and an empty
+src -c 'update cron.job set active = false'          # file would read as "no schedules" — pg_cron runs INSIDE
+# pg_cron's key is `jobid`, not `id`.               # postgres, the one container still up, so its jobs would write
+# (rolling back to the source means re-running that update with `= true where jobid in (…)` there as well)
 
 # services
 insta --agent services add postgres db
@@ -1068,7 +1071,7 @@ psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0
 errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
 psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
-[ -s cron-active.txt ] && psql "$PG" -c "UPDATE cron.job SET active = true WHERE id IN ($(paste -sd, cron-active.txt))"
+[ -s cron-active.txt ] && psql "$PG" -v ON_ERROR_STOP=1 -c "UPDATE cron.job SET active = true WHERE jobid IN ($(paste -sd, cron-active.txt))"
                                                                              # step 0 deactivated these; ids travel in the dump
 
 # 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
