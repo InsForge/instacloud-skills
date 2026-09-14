@@ -1068,10 +1068,13 @@ eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
 aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
 
 # 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
-docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" > dump.sql     # $SRC_DB, never a literal `insforge`:
-# pg_dump's error goes to stderr, so a wrong name leaves dump.sql EMPTY and the restore below then counts 0 errors
-# and "passes" against an empty database. pg_dump 15 against 15 needs no filtering.
-# a host pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
+docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" > dump.sql || exit 1   # $SRC_DB, not a literal
+grep -q '^-- PostgreSQL database dump complete' dump.sql \
+  || { echo "dump.sql is empty or truncated — read pg_dump's stderr; \$SRC_DB was '$SRC_DB'" >&2; exit 1; }
+# Both guards are the point: pg_dump writes its errors to STDERR, so a wrong database name leaves dump.sql empty,
+# and an empty file restores with 0 errors — the stated pass condition, met against an empty database. The trailing
+# marker also catches a dump truncated by a disk filling up. pg_dump 15 against 15 needs no filtering; a host
+# pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
 psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
 errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
