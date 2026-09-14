@@ -1096,14 +1096,28 @@ insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/ap
 insta --agent compute restart api
 ```
 
-**If the source is InsForge Cloud rather than self-hosted**, the shape holds and five things change. Measured end
+**If the source is InsForge Cloud rather than self-hosted**, the shape holds and seven things change. Measured end
 to end on 2026-09-14 against a real cloud project (backend 2.2.6, PG 15.18 → insta pg 16): every table row-for-row
 identical, users, migrations and `system.secrets` counts equal, anon reads 200 through both the InsForge API and
 PostgREST.
 
-1. **There is no `.env` and no container — the backend serves the migration inputs.** `npx -y @insforge/cli --json
-   secrets get <KEY>` returns `JWT_SECRET`, `ANON_KEY`, `API_KEY` and `JWT_PRIVATE_KEY`; `db connection-string`
-   (cloud only) returns the DSN for a host `pg_dump` over TLS. **`ENCRYPTION_KEY` is absent on cloud, and must stay
+1. **There is no `.env` and no container — the backend serves the migration inputs.** `secrets get <KEY>` returns
+   `JWT_SECRET`, `ANON_KEY`, `API_KEY` and `JWT_PRIVATE_KEY`; `db connection-string` (cloud only) returns the DSN
+   for a host `pg_dump` over TLS. **Both print the credential to stdout, so neither may be run bare** — the same
+   rule as `fly ssh console -C printenv`: pipe each value straight into its destination, and capture the DSN into a
+   mode-600 file you never `cat`:
+
+   ```bash
+   umask 077                                         # everything written below is 600
+   ifc() { npx -y @insforge/cli --json "$@"; }
+   for p in JWT_SECRET:JWT_SECRET API_KEY:ACCESS_API_KEY ANON_KEY:ACCESS_ANON_KEY; do
+     ifc secrets get "${p%%:*}" | jq -er '.value' | insta --agent secrets set "${p##*:}" --service compute/api
+   done                                              # jq -e: a missing .value fails the pipeline instead of
+   ifc db connection-string | jq -er '.connectionString' > src.dsn   # setting the secret to "null"
+   SRC() { psql "$(cat src.dsn)" "$@"; }             # $(cat …) keeps the DSN out of argv, where `ps` would show it
+   ```
+
+   **`ENCRYPTION_KEY` is absent on cloud, and must stay
    absent** — measured, `sha256(current_setting('app.encryption_key'))` equals `sha256(JWT_SECRET)`, i.e. the cloud
    runs on the documented fallback, so carrying `JWT_SECRET` alone is sufficient. It is sufficient in the strong
    sense: on the target `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and `JWT_KEY_ID` all came back **byte-identical**,
@@ -1116,17 +1130,52 @@ PostgREST.
    **The failure is badly disguised:** a first deploy without them fails as
    `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
    serving at all. `insta --agent logs compute <svc>` carries the real line.
-3. **You cannot quiesce a cloud source.** There is no `compose stop`, no project pause, and deactivating `cron.job`
+3. **The files come out over the S3 gateway — there is no volume to `docker compose cp`.** Skipping this is the
+   one way to produce a migration that looks clean and is not: the dump carries `storage.buckets` and
+   `storage.objects`, so a target restored without the bytes lists every file and serves none. InsForge Storage
+   speaks S3 at `https://<app-key>.<region>.insforge.app/storage/v1/s3` (2.0.9+, **path-style only**, cloud only).
+   Minting a key there is **the one write this path makes on the source**; delete it when you are done.
+
+   ```bash
+   ifc storage s3-keys create --description migration > src-s3.json     # secret shown ONCE; 600 by the umask above
+   SRC_EP="https://<app-key>.<region>.insforge.app/storage/v1/s3"
+   src_n="$(SRC -Atc 'select count(*) from storage.objects')"           # count BEFORE, from the source itself
+   for b in $(ifc storage buckets | jq -r '.[].name'); do               # one sync per bucket: the source has real
+     AWS_ACCESS_KEY_ID="$(jq -r .data.accessKeyId src-s3.json)" \       # buckets, the target has ONE with prefixes
+     AWS_SECRET_ACCESS_KEY="$(jq -r .data.secretAccessKey src-s3.json)" \
+       aws s3 sync "s3://$b/" "./storage-data/$b/" --endpoint-url "$SRC_EP" || exit 1
+   done
+   [ "$(find ./storage-data -type f | wc -l | tr -d ' ')" = "$src_n" ] \
+     || { echo "downloaded $(find ./storage-data -type f | wc -l) of $src_n objects — do NOT dump" >&2; exit 1; }
+   ifc storage s3-keys delete "$(jq -r .data.id src-s3.json)"           # the source goes back as it was
+   ```
+
+   Then upload with the same `aws s3 sync … s3://$S3_BUCKET/local/` as the self-hosted path, and re-check the count
+   on the target before moving on. **Both checks are fail-closed on purpose:** `aws s3 sync` exits 0 on an empty
+   source, and so does a restore of metadata with no bytes behind it. Measured only in part — the cloud project
+   tested had **no objects**, so the gateway path above is derived from InsForge's own S3 documentation and
+   verified on the target side only. Treat a cloud source that holds objects as **unproven**: run the two counts,
+   and stop if they disagree.
+4. **You cannot quiesce a cloud source.** There is no `compose stop`, no project pause, and deactivating `cron.job`
    would itself be a write on someone's production database. Read the exposure first, through the DSN —
    `select count(*) from cron.job where active` and the `schedules` tables — then keep the cutover window short and
    freeze at the application level instead. The measured source had 2 internal cleanup jobs and no user schedules;
    a source with user schedules writing app rows cannot be migrated consistently this way.
-4. **Read the `insforge.*` GUCs off the live source, not out of the repo.** They drift:
+5. **Read the `insforge.*` GUCs off the live source, not out of the repo.** They drift:
    `select current_setting('insforge.internal_schemas', true)` on the measured source listed a schema the checked-in
    `postgresql.conf` does not. `db query --unrestricted` is **disabled** on cloud projects and the restricted mode
    denies the `cron` schema, so use the DSN for anything beyond ordinary reads.
-5. **Deploy the tag, not the version string.** The API reports `service_version` `2.2.6`; the image is
+6. **Deploy the tag, not the version string.** The API reports `service_version` `2.2.6`; the image is
    `ghcr.io/insforge/insforge-oss:v2.2.6` and the bare number 404s.
+7. **The migrated project stops being a cloud project, and InsForge itself behaves differently.**
+   `isCloudEnvironment()` (`backend/src/utils/environment.ts`) is true only when `AWS_INSTANCE_PROFILE_NAME` is
+   set, which it is not here — so the result is a **self-hosted InsForge holding cloud data**, and the routes that
+   branch on it flip. What the user LOSES, because the cloud control plane provided it and the container does not:
+   **shared OAuth keys** (`useSharedKey` is refused with `Shared OAuth keys are not enabled in this environment`, so
+   every social login needs its own client id and secret — this is the one that logs real users out of a real app),
+   the managed OpenRouter key behind the AI gateway, and the managed analytics and webscraper credentials; each
+   now demands the user's own. What it GAINS: `/api/database/backups` and `/api/database/config`, which cloud
+   withholds because its own control plane owns them. Enumerate this for the user **before** the cutover, not after.
 
 **One more thing to tell the user before the cutover, either source:** the target inherits the source's auth
 configuration, so a source with email verification on and no SMTP configured produces a target where existing users
@@ -1148,7 +1197,9 @@ cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
 > `secrets set` stdin/argument asymmetry, and the refusal messages quoted above. **Not verified:** any
 > end-to-end migration from Render, Railway, Fly or Heroku itself, the portless-worker path, and volume data
 > movement. (Both InsForge paths above were migrated end to end on 2026-09-14: self-hosted with its files, and a
-> real InsForge Cloud project, whose source had no objects — its storage half is verified on the target only.)
+> real InsForge Cloud project. The cloud source held **no objects**, so its S3-gateway export step is derived from
+> InsForge's own documentation and verified on the target side only — a cloud source with files is unproven, which
+> is why that step is written to stop on a count mismatch.)
 >
 > **The pg18→pg16 downgrade in step 3 is verified end to end** against a seeded PG 18.6 source and a
 > real InstaCloud PG 16.15 target: restore exited 0 with empty stderr, and a catalog and data diff
