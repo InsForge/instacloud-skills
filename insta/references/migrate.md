@@ -994,7 +994,8 @@ psql "$PG" -v ON_ERROR_STOP=1 \
 
 # 2. secrets and bindings (values from the source .env, from stdin — never as arguments)
 for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD \
-         FLY_API_TOKEN FLY_ORG; do                  # the last two: see the compute note below. Absent ones skip.
+         FLY_API_TOKEN FLY_ORG VERCEL_TOKEN VERCEL_TEAM_ID VERCEL_PROJECT_ID; do   # the last five: see the
+                                                    # compute note below. Names absent from .env are skipped.
   v="$(envval "$n")"; [ -n "$v" ] || continue     # a name absent from .env must stay absent here: setting an EMPTY
   printf '%s' "$v" | insta --agent secrets set "$n" --service compute/api   # ENCRYPTION_KEY defeats its own
 done                                              # fallback to JWT_SECRET and breaks system.secrets decryption
@@ -1082,11 +1083,18 @@ Then the app: change `baseUrl` in `createClient` to the api host — keys unchan
 you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
 their own machine. `providers/compute/fly.provider.ts` runs them in the user's **own Fly account** — its comment
 says self-hosters enable compute by setting `FLY_API_TOKEN` and `FLY_ORG`, which is why those two are in the
-secret loop above. `providers/deployments/vercel.provider.ts` pushes frontends.
+secret loop above. `providers/deployments/vercel.provider.ts` pushes frontends, and needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and
+`VERCEL_PROJECT_ID` in the backend's environment or it refuses every management call
+(`VERCEL_TOKEN not found in environment variables`).
 
-Carry `FLY_API_TOKEN` and `FLY_ORG` when they exist. Those machines belong to the user, the `compute` schema rows
-that reference them ride the dump, and without the token the new backend can see the rows but cannot manage the
-machines. The source is stopped, so only one InsForge is ever driving that Fly account.
+**Carry all five when they exist**, for one reason that covers both: those resources belong to the user and keep
+serving, the `compute` and `deployments` schema rows that reference them ride the dump, and without the
+credentials the new backend can see the rows and cannot inspect, redeploy or otherwise manage what they point at.
+The source is stopped, so only one InsForge is ever driving that Fly account or that Vercel project.
+
+A Vercel-hosted frontend needs one more thing the credentials do not give it: its own `baseUrl` points at the old
+InsForge, so it must be **redeployed** after the change, through the migrated backend or through Vercel directly.
+Until it is, the frontend serves fine and talks to a backend that is stopped.
 
 The Docker-socket case is the one with work left: those containers were on the machine the migration stops, so
 nothing is left serving them. That is **optional work after the migration, not part of it** — a compute service
