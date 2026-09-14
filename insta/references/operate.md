@@ -109,7 +109,7 @@ insta --agent compute volume app                     # view size, mount path, an
 insta --agent compute volume app --delete            # destroy the disk and all data
 ```
 
-`--size` on a volumeless service attaches a volume, and it mounts on the **next deploy/redeploy**.
+`--size` on a volumeless service attaches a volume, and it mounts when the machine is next created: the **next deploy, or `insta --agent compute restart`** (measured; no rebuild needed).
 `--size` on an existing volume grows it only; volumes cannot shrink. Deleting is the only way off a
 volume and is irreversible. A volume keeps machine count at 1 and changes scale-to-zero from suspend
 to stop; those constraints lift after deletion.

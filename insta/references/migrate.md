@@ -11,10 +11,38 @@ losing writes.
 
 **Running as an agent.** Every `insta` invocation below carries `--agent`, per SKILL.md's rule:
 always pass it, including for read-only commands, and do not rely on environment detection. The
-session is project-bound, so a mutation without one fails with `agent session missing, expired, or
-for another project/environment` — run `insta --agent setup agent` rather than dropping the flag.
+session is project-bound, so a command without one fails with `agent session missing, expired, or
+for another project/environment`.
+
+**Recovering from that error: always pass `--env`.**
+
+```bash
+insta --agent env                                   # read the env you are ON first
+insta --agent setup agent --env <that env> -y       # NEVER bare
+```
+
+`--env` defaults to **prod**, and its own help says "switches and persists, like `insta env use`"
+(`cli/src/index.ts`). `setup.ts` is explicit about what that costs: the switch "goes through
+`env use` — the one path that persists the choice and **drops the now-foreign session**". So
+`insta --agent setup agent` with no `--env` on a staging machine logs the whole machine out of
+staging, for every project. **That turns a one-project session error into a machine-wide outage** —
+measured, on this machine, during the validation run this file came from.
+If the login itself is gone (`insta --agent status` shows `user: (not logged in)` — `env` prints no
+login state — and commands return `unauthorized (HTTP 401)`), you can log back in yourself only if
+you were handed credentials: `insta --agent login --api-key "$INSTA_API_KEY"` (an `insta_` token) or
+`insta --agent login --email <email>` with `$INSTA_PASSWORD` set. Every other mode (`--device`, bare
+`login`) needs a human at a browser: relay `insta login` and stop.
 **Never remove `--agent` to get past a governance refusal**; relay the approval command to a human
 admin and retry the unchanged request.
+
+**A stateless app is a supported shape, and the cutover is shorter for it.** Steps 3 and 4 are
+entirely Postgres and their pass conditions are `psql` diffs. An app with no database migrates in
+steps 0, 1, 2, 5, 6 and 7, dropping `services add postgres`, `secrets bind` and the psql lines from
+step 1. Step 2 stays: it is the writer barrier, not a Postgres check, and "no database" rarely means
+"no state" — a worker posting to a third-party API or a cron sending mail is still a writer, so stop
+the source's workers and cron (and the target's proving deploy) before cutting traffic. Read
+literally the ordering below cannot be completed without a database; that is a gap in the writing,
+not a claim the app is unsupported.
 
 ## The ordered cutover
 
@@ -46,7 +74,16 @@ temp dir created no local `.insta/` at all and rewrote `~/.insta/project.json`, 
 **So do not rely on the link at all when you are one of several workers.** Pass
 `INSTA_PROJECT_ID` (plus `INSTA_ORG_ID`), which `readProject` honours ahead of any file: "an
 explicit parameter outranks ambient state". If you do use the link, capture the resolved file first
-and restore it after. Note `~/.insta/project.json` is a different file from `~/.insta/config.json`,
+and restore it after.
+
+**`INSTA_PROJECT_ID` alone is not enough for parallel workers, though.** The **agent session** is a
+second file found by the *same* walk-up — `loadAgentSession` and `saveAgentSession` both resolve
+`findProjectRoot(cwd) ?? cwd` and read `.insta/agent-session.json` (`cli/src/agent.ts`) — and the
+session is rejected unless `session.projectId` equals the project you are targeting. So N workers
+sharing one home share **one** session file keyed to **one** project, and every worker but that one
+fails with `agent session missing, expired, or for another project/environment` no matter what
+`INSTA_PROJECT_ID` says. **Give each worker its own directory containing a `.insta/project.json`**
+so the walk-up stops there and each gets its own session file. Note `~/.insta/project.json` is a different file from `~/.insta/config.json`,
 which holds the env and session and carries no project link.
 
 **1. Provision, bind, deploy.**
@@ -62,6 +99,14 @@ step and a mystery 400 after the cutover. Open the app's settings and answer two
   `RENDER_EXTERNAL_HOSTNAME`), or a literal you must edit (Fly's `.fly.dev`, Heroku's fallback
   list)? See the per-source table in the Render section for what each platform's apps actually do.
 
+**`insta --agent build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
+offline, no login. It prints the builder, the detected install/build/start commands, the port and
+why, and the Dockerfile nixpacks would generate — and it **exits 1 on a repo that has no detectable
+start command**, which is the celery blocker, before you touch the platform. **Caveat, measured:**
+on a Dockerfile-less repo it needs a local `nixpacks` binary, which the CLI never installs; without
+one it reports `verdict: failed` for the *wrong reason* (`nixpacks is not installed to generate
+one`, start-command check `skipped`) on a repo the server lane builds fine. Install nixpacks first.
+
 **Write down the variable name, or the file and line to change.** You cannot set the value yet —
 on insta-compute the host is minted by the plane at first deploy, so it does not exist until after
 the deploy below (`adapters/insta-compute.ts`: routeKey is "learned at first deploy", and
@@ -74,9 +119,110 @@ insta --agent services add postgres db                          # + redis/storag
 insta --agent services add compute app --port <n>               # REQUIRED: the bind below targets it
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent deploy --image <registry/img> --port <n>          # works on every compute plane
-# or: insta --agent deploy <dir> --port <n>                     # insta-compute: Dockerfile optional (gateway builds it, nixpacks if none); Fly-backed: Dockerfile required
-# or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; nixpacks if no Dockerfile
+# or: insta --agent deploy <dir> --port <n>                     # any plane, no GitHub needed; Dockerfile optional on insta-compute, required on Fly-backed
+# or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; nixpacks if no Dockerfile; redeploys on push
 ```
+
+**What nixpacks decides for you, and where that bites.** Three of its decisions are silent
+regressions against the buildpack the app came from.
+
+- **It pins the language toolchain from a fixed nixpkgs revision, not from your repo.** Confirmed in
+  three languages. **Go**: `nixPkgs: ["go"]` at rev `e89cf1c9` (2024-04-07) → **Go 1.22.1**, with
+  `go.mod`'s `go 1.14` never consulted; read it off the built binary
+  (`grep -abo 'Go buildinf:'` then the adjacent string — a naive `grep 'go1\.'` also matches
+  dependency strings). **Node** with no `engines` → **`nodejs_18`**, end-of-life. **Python** →
+  **3.12.7**, which is what killed `render-examples/celery`: its 2022 pins die at `import celery`
+  with `AttributeError: 'EntryPoints' object has no attribute 'get'`. **The only lever is a
+  repo-side pin** (`.python-version`, `runtime.txt`, `engines`) — `connect-repo` exposes no build
+  env or build-arg flag.
+- **It sets its own env**: `NODE_ENV=production`, `CI=true`, `NPM_CONFIG_PRODUCTION=false` on Node;
+  `CGO_ENABLED=0` on Go, which Render does not set and which breaks cgo-linked libraries for a
+  reason no build log names.
+- **The runtime image carries the whole source tree.** `COPY --from=0 /app/ /app/` under
+  `WORKDIR /app/`, so a binary reading data files relative to cwd keeps working — measured on a Go
+  app whose `LoadHTMLGlob("resources/*.templ.html")` panics if the glob misses. That is *why*
+  buildpack-era apps survive with no Dockerfile, and it also means production images ship source
+  and build scripts. Write the idiomatic multi-stage Dockerfile that copies only the binary, and
+  that same app panics on boot, **with a green TCP check** masking it. The image also carries
+  **`/app/.nixpacks/Dockerfile`**, which is the best post-hoc build audit available: base images,
+  nixpkgs rev, build and start commands, copy semantics, in one `exec`.
+
+**Two things about `connect-repo` that will cost you a migration if you do not know them.**
+
+**It overwrites the port you set at `services add`.** `cli/src/commands/github.ts` builds the body as
+`port: o.port !== undefined ? parsePort(o.port) : c.port`, where `c` is the *server-side detection
+candidate* — the service's own configured port is never consulted. Measured: `0 → 8000` and
+`8080 → 8000`, and it happens even when the build then fails. **So repeat the port on the connect:**
+
+```bash
+insta --agent compute connect-repo <owner/repo> <svc> --public --port <n>
+```
+
+It is invisible otherwise: `services add` does not echo the port, `connect-repo` does not, and
+`services list` only shows it inside the `running <image>:<port>` fragment, so an imageless service
+shows none. Only `--json` reveals it. Benign for an app that reads `$PORT`; a **silent, guaranteed
+dead service** for anything with a hardcoded 3000, 5000 or 4000.
+
+**It is asynchronous, and a failed build looks like a pending one.** It exits 0 printing
+`building main now` while the build may already be dead. Confirm before you curl:
+
+```bash
+insta --agent compute repo <svc> --json      # → source.last_build.{status,error,image_ref}
+```
+
+Nothing else tells you. Plain `insta --agent compute repo` **hides** the build result;
+`compute status` sits at `desired=running live=none` indefinitely; and both `logs compute <svc>` and
+`logs compute <svc> --deploy` answer `note: operations unavailable (insta-compute 404: not found)`
+whenever no machine has ever existed — which reads as a broken logging subsystem rather than a
+failed build. If `last_build.status` is `failed`, there is **no host to curl**, so step 1's pass
+condition is unreachable rather than failing.
+
+**Do not stop at the `error` string — it is not diagnostic.** All you get is
+`build <id> failed: build command failed`, and there is no build-log surface at all
+(`logs … --deploy` answers `operations unavailable (insta-compute 404: not found)` because no
+machine ever existed). **Reproduce locally to learn why:** `insta --agent build <dir>`, then
+`nixpacks build <dir>` for the full output. That is how the celery cause (no detectable start
+command) was found.
+
+**Before reaching for a different lane: almost no migration blocker is a lane problem.** Measured
+across six real repos, the things that stopped a migration were **app-side** (an `ALLOWED_HOSTS`
+that only reads the old platform's variable; a missing `APP_KEY`; a DSN parser that drops
+`sslmode`) or **builder-side** (nixpacks detecting no start command; nixpacks pinning a language
+version the app predates). None were about how the source reached the builder. The build request
+carries only `source`, `build` and `target` — **there is no start-command field at all**, and on
+the nixpacks type "only `context_path` is configurable" — so no choice of lane can supply one. When
+a build fails, fix the repo (a `Procfile`, a version pin, a committed `Dockerfile`), not the
+transport.
+
+**Which lane. `insta --agent deploy <dir>` is now the migration default, on every plane.** The archive
+lane shipped (insta-cli#197, and the `source-build` discovery endpoint is on platform main and on
+prod), and it changes the answer this file used to give. Measured on staging, 2026-09-11: a
+Dockerfile-less `render-examples/express-hello-world` checkout, `insta --agent deploy . --port 3000`,
+**HTTP 200** — packed 7 files, `deploying … via the gateway (nixpacks)`, built, deployed. **66
+seconds with a warm builder, 6m28s cold** (the remote builder is Fly's; warm it with a throwaway
+build before anything time-sensitive).
+
+How the CLI decides, so you can predict it: it asks `GET /projects/:id/source-build?branch=&group=`
+and the **platform** answers `flyctl`, `archive`, `local-docker` or `none`. Measured: a Fly-backed
+service answers `{"lane":"flyctl"}`, an insta-compute service answers `{"lane":"archive"}` with the
+server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files). A platform too old to have
+the endpoint answers 404 and the CLI falls back to the old flyctl path unchanged. So:
+
+- **insta-compute target:** `deploy <dir>` packs the directory and the gateway builds it — with the
+  Dockerfile if one is present, **nixpacks if not.** No GitHub, no App authorization: this removes
+  the one step in this runbook only a human could perform for a private repo.
+- **Fly-backed target:** `deploy <dir>` still needs a Dockerfile (the flyctl lane builds it). A Fly
+  app has one, so it works; a buildpack app does not, so use `connect-repo` there.
+
+**`connect-repo` is still right for three things:** a private repo the user wants redeployed on
+push; a tree the archive lane refuses — symlinks are rejected **at pack time**, by path
+(`a deploy archive cannot contain symlinks — the build gateway rejects them: link.txt -> real.txt`),
+and so are trees over the three limits; and any case where the code is not checked out locally.
+
+**Neither lane changes what nixpacks does.** Measured: `render-examples/celery` fails through the
+archive lane with the identical `build … failed: build command failed` it produced through
+`connect-repo`. Same builder, same detection, same pins. The lane is only how the source arrives.
+
 
 Without the `services add compute` line the bind fails with `service not found on branch:
 compute/app`. A deploy materializes env into the machine config, so the binding takes effect with
@@ -89,6 +235,14 @@ components instead — `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPO
 Railway injects by default and what `railwayapp-templates/django` reads via `os.environ[...]` —
 **point the app at the single DSN rather than trying to reproduce the five.** In Django that is
 `dj-database-url`; most stacks accept a DSN directly. Do this as part of the migration, not after.
+
+**A near neighbour: an app that parses the DSN and drops what it does not recognise.** Insta's
+postgres DSN ends `?sslmode=require`. An app that does
+`const { host, port, database, user, password } = parse(env('DATABASE_URL'))` and passes only those
+five to its driver discards the SSL requirement, and the connection is then refused with
+**`FATAL: instadb: database "instadb" does not exist`** (measured, same DSN, only `sslmode`
+differing) — an error that names the wrong cause entirely and sends people hunting a provisioning
+fault. Grep for a DSN parser, not just for `PG*` names.
 
 The reason it must be a code change is that the alternative fails *silently*. `insta --agent secrets bind`
 validates the env name only against `^[A-Z][A-Z0-9_]{0,63}$`, and for a postgres source
@@ -131,14 +285,58 @@ insta --agent compute stop <service>
 ```
 
 This deploy exists to prove the image builds, the binding resolves and the app serves. It must not
-leave a **second writable system standing.** `insta --agent services add` assigns a compute service
-a default domain, so from the moment this deploy gives it a machine the app is reachable on the
-public internet, and any write it takes — a session row, a signup, an analytics insert — lands in
+leave a **second writable system standing.** A compute service has **no domain until its first
+successful deploy** — measured on three separate services: `services add` leaves `domain: null`,
+and the host is minted with the image, which is what the pre-flight above already says. (Both
+`services add --help` and an earlier version of this note claimed `add` assigns one; they are
+wrong.) But domain and machine arrive together, so the moment this deploy succeeds the app **is**
+reachable on the public internet, and any write it takes — a session row, a signup, an analytics insert — lands in
 the target database *before* the restore. That breaks the cutover twice over: step 3 requires an
 empty target and would now collide, and step 2's promise that only one side accepts writes is no
 longer true. `compute stop` takes it offline and, per the CLI, "traffic will NOT wake it until
 `start`". Step 5 brings it back with `start` then `restart`, which is the sequence it already
 prescribes for a stopped service.
+
+**But the stop cannot prevent the write that matters most.** nixpacks bakes migrations into the
+start command: measured on a Django repo, the build record's `start_command` is
+`python manage.py migrate && gunicorn mysite.wsgi`. That runs at **container start**, and measured on prod it lands while status is still
+**`deploying`** — before the build ever reports `live`. So it precedes step 1's *pass condition*,
+not merely the curl: `live` is not a checkpoint you can get ahead of. Nothing prevents it either,
+since `compute stop` is only reachable after the deploy that causes it. On a real cutover it left the target
+holding **10 tables and 48 rows** (18 `django_migrations`, 24 `auth_permission`, 6 `django_content_type`). The stop prevents *traffic-driven* writes only.
+
+**Read the start command as soon as the build starts — you cannot read it earlier.** Before
+`connect-repo` the record is only `{"source":{"type":"image","image":null}}`, with no
+`start_command` at all, so this is not a pre-flight check. Measured: the field appears **~14s
+after** `connect-repo` while status is still `building`, and the write lands **1m57s later**, so
+there is a usable two-minute window:
+
+```bash
+insta --agent compute repo <svc> --json     # → source.start_command
+```
+
+If it migrates at boot, then **step 3's emptiness check will fail and re-adding the postgres service
+is the expected path, not an exception.** **Do not react by trying to strip the migrate out of the
+start command** (you cannot anyway — `connect-repo` cannot set commands): measured, once the target
+holds a faithful restore the boot-migrate is **idempotent**, because `django_migrations` travels in
+the dump. After `start`+`restart` the app re-ran `manage.py migrate` against the restored database
+and the count diff was still identical. The boot-migrate is only dangerous *before* the restore,
+which is exactly why the ordering works. Prefer a fresh postgres service after this proving deploy
+over trying to clean the one it touched.
+
+**A deploy also defeats the stop.** Measured: after an explicit `compute stop`, an
+`insta --agent deploy --image …` brought the service live and answering **200** on its public URL
+while `compute status` still reported `desired=stopped  live=running`. The status is not a safety
+check. Do not redeploy anything during steps 3 and 4. (`compute exec` does the same, which this
+file already warns about.)
+
+**The nixpacks image has no psql client** (measured), so any advice to verify the database from
+inside the app's container does not apply on the lane this file prescribes. Verify from your own
+shell against `insta --agent db url`, and use step 5's redacted `printenv` for what the machine
+holds.
+
+**`compute stop` is accepted on a service with no machine** (`stop → desired=stopped (live: none)`),
+unlike `restart`, so it is safe to run even after a failed build.
 
 **2. Stop the writers — on BOTH sides.**
 
@@ -176,10 +374,35 @@ filter.
 
 **Upgrade or equal (source <= target).** Nothing special.
 
+**Set `PG` first, and set it to the service you are actually restoring into.** If step 3 had you
+add a **fresh** postgres service because the proving deploy dirtied the first one, then every
+command from here to step 5 must name that new one:
+
+```bash
+export PG=db2        # ← the FRESH service; plain `db` only if you never re-added
+insta --agent services add postgres "$PG"            # FRESH path only — skip when $PG is the step-1 service, it exists
+insta --agent secrets bind DATABASE_URL "postgres/$PG" --to compute/<service>   # BOTH paths — an upsert, a no-op when unchanged
+```
+
+The `bind` is an upsert on the env name (`provisioning/userSecrets.ts` → `upsertBinding`), so on
+the fresh path it replaces the `postgres/db` source from step 1 with no `unbind` first, and on the
+plain path it re-asserts what step 1 bound; it refuses only when a *user secret* of the same name
+exists. `services add`, by contrast, is not idempotent — run it only for a service that does not
+exist yet. It is rules-only until step 5's `restart`, so the stopped app is
+not touched by it — but without it step 5 restarts the app onto the **old dirty database** while
+every check from here on reports success against `$PG`.
+
+This is the sharpest trap in the whole procedure. With two postgres services a bare
+`insta --agent db url` fails loudly (`error: multiple postgres services — specify one: db, db2`),
+which is the *good* outcome. The bad outcome is copy-pasting `--group db`: measured, that restores
+into, verifies, and cuts over to the **old dirty database** while every check reports success —
+`exit 0`, `grep -c '^ERROR'` → 0. Step 4's count diff does catch it (10 tables against 14), so it
+costs a restore cycle rather than data, but only if you actually run step 4 against the same `$PG`.
+
 ```bash
 set -o pipefail
 pg_dump --no-owner --no-privileges "$SOURCE_URL" \
-  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group db)" 2>&1 | tee restore.log
+  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
 grep -c '^ERROR' restore.log              # must print 0
 ```
 
@@ -191,7 +414,7 @@ workaround. `pg_dump` from 18 emits exactly one statement pg16 does not know.
 set -o pipefail
 pg_dump --format=plain --no-owner --no-privileges "$SOURCE_URL" \
   | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
-  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group db)" 2>&1 | tee restore.log
+  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
 grep -c '^ERROR' restore.log              # must print 0
 ```
 
@@ -211,7 +434,7 @@ Custom-format archives have no filter hook, so route them through text:
 ```bash
 pg_restore --no-owner --no-privileges -f - source.dump \
   | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
-  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group db)"
+  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")"
 ```
 
 The streamed form above needs no `--exit-on-error`: `pg_restore -f -` only writes SQL, and the
@@ -270,9 +493,11 @@ A full dump restored into a populated database is not an incremental
 sync: it collides on existing objects and primary keys. **Prefer adding a fresh postgres service**
 over dropping the database. `DROP DATABASE` needs a DSN retargeted to `/postgres`, is blocked by
 insta's own `pg_cron` session until you `pg_terminate_backend` it, and the recreated database
-**loses the platform's preinstalled extensions** (`pgcrypto`, `uuid-ossp`, `pgaudit`, `vector`,
-`pg_stat_monitor`, `pg_stat_statements`, leaving only `plpgsql`). If you do add a fresh service the
-DSN changes, so see step 5.
+**loses the platform's preinstalled extensions** — read the set with
+`psql "$T" -c "select extname from pg_extension order by 1"` rather than assuming it; measured on a
+fresh staging pg16 it was `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`,
+and **not** `pgcrypto` or `uuid-ossp`, so an app wanting `gen_random_uuid()` must create it. If you do add a fresh service the
+DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
 status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both.
@@ -299,11 +524,15 @@ where c.relkind = 'r'
 order by 1;
 SQL
 
-T="$(insta --agent db url --group db)"             # scriptable; `insta --agent db connect` is interactive
+T="$(insta --agent db url --group "$PG")"             # scriptable; `insta --agent db connect` is interactive
 psql "$T"          -At -F, -f /tmp/counts.sql | sort > /tmp/target.csv
 psql "$SOURCE_URL" -At -F, -f /tmp/counts.sql | sort > /tmp/source.csv
 diff /tmp/source.csv /tmp/target.csv && echo "row counts identical"
 ```
+
+If you test the diff by deleting rows, pick **unreferenced** ones: a correctly restored foreign key
+refuses the delete (`update or delete on table "auth_user" violates foreign key constraint …`),
+which is itself evidence the restore worked.
 
 It enumerates from `pg_class`, not from a stats view, so a reset cannot hide a table from it either.
 Verified after `pg_stat_reset()`: exact counts for a 1,000-row table, a 7-row table, an **empty**
@@ -320,8 +549,10 @@ psql "$T" -c "select max(id), max(created_at) from <append_only_table>"
 ```
 
 Run those against the source too and diff. **"Extensions present" cannot fail** on its own — a
-fresh insta postgres already ships `pgcrypto`, `uuid-ossp`, `pgaudit`, `vector`, `pg_stat_monitor`
-and `pg_stat_statements`, so the dump's `CREATE EXTENSION IF NOT EXISTS` is a no-op. Compare the
+fresh insta postgres already ships several, so the dump's `CREATE EXTENSION IF NOT EXISTS` is a
+no-op for those. **Read the set, do not assume it** — measured on staging pg16:
+`pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`, with **no `pgcrypto` and no
+`uuid-ossp`**, despite an earlier version of this file listing both. Compare the
 **sets** source-vs-target instead of asserting presence.
 
 **After a major-version downgrade, add the schema checks**, because that is where a downgrade loses
@@ -334,10 +565,16 @@ psql "$T" -At -F'|' -c "select n.nspname||'.'||c.conname, c.contype, c.convalida
         and c.contype <> 'n' order by 1"
 psql "$T" -At -F'|' -c "select schemaname||'.'||indexname, indexdef from pg_indexes
       where schemaname not in ('pg_catalog','information_schema') order by 1"
-psql "$T" -At      -c "select format('%I.%I(%s)', n.nspname, p.proname,
-                                    pg_get_function_identity_arguments(p.oid))
+psql "$T" -At -F'|' -c "select format('%I.%I(%s)', n.nspname, p.proname,
+                                     pg_get_function_identity_arguments(p.oid)),
+             case when p.prorettype in ('trigger'::regtype, 'event_trigger'::regtype)
+                  then 'trigger' else 'callable' end
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname not in ('pg_catalog','information_schema') order by 1"
+      where n.nspname not in ('pg_catalog','information_schema')
+        and not exists (select 1 from pg_depend d
+                        where d.objid = p.oid and d.classid = 'pg_proc'::regclass
+                          and d.deptype = 'e')
+      order by 1"
 ```
 
 **All three cover every non-system schema, not just `public`.** An app with its own schema can lose
@@ -350,10 +587,22 @@ being identical. Verified: identical output across a `set search_path` change, w
 
 Exclude `contype = 'n'` rows, since PG18 records `NOT NULL` there and pg16 does not. Diff `indexdef`
 as text, and confirm `convalidated` is true rather than merely that the constraint exists.
-Then **call every function the third query lists, once.** Their bodies were never parsed during the
-restore, so this is the only thing that catches PG17/18 SQL inside them.
+**The `pg_depend … deptype = 'e'` exclusion is not optional.** Extensions install their functions
+into `public`, so without it the target lists every extension's functions while the source lists
+none: measured **139 rows against 2** on a real insta postgres, a 137-line false-positive diff on
+*every* migration. A throwaway pg16 with only `pgcrypto` present already went from 2 rows to **38**.
+An agent facing that either escalates for nothing or learns to ignore the check.
+
+Then **call every function the third query lists, once** — their bodies were never parsed during the
+restore, so this is the only thing that catches PG17/18 SQL inside them. **Except those marked
+`trigger`:** calling one directly fails with `trigger functions can only be called as triggers`
+(event-trigger functions are marked the same way, and fail the same way). Exercise a row trigger's
+function with DML against its table, and an event trigger's with a DDL statement that matches its
+`pg_event_trigger` row: `evtevent` is the event class (`ddl_command_end`, `sql_drop`, …) and
+`evttags` the command tags it filters on, so a `CREATE TABLE` plus `DROP TABLE` in a throwaway
+schema fires most of them.
 *Pass:* the per-table count diff is **empty** (every table, exact, both sides); latest rows match;
-sequences at or above the source's; extension sets reconciled;
+sequences at or above the source's; extension sets reconciled as a **subset** (source minus target empty — a plain diff is non-empty on every migration, since the target always carries the preinstalled ones);
 after a downgrade, constraints validated, `indexdef`s equal, and every function callable.
 
 **5. Bring the app onto the target — and `start` does NOT re-resolve env.**
@@ -363,6 +612,7 @@ after a downgrade, constraints validated, `indexdef`s equal, and every function 
 insta --agent compute start <service>
 
 # binding CHANGED (you restored into a fresh postgres service):
+insta --agent secrets bindings --target compute/<service>   # MUST print: DATABASE_URL <- postgres/$PG.DATABASE_URL
 insta --agent compute start <service> && insta --agent compute restart <service>
 ```
 
@@ -370,7 +620,9 @@ insta --agent compute start <service> && insta --agent compute restart <service>
 brings the machine back **with the env it was deployed with**, so the app keeps writing to the
 pre-migration database — while `insta --agent secrets bindings` already reports the new source. `restart`
 does re-resolve (`restarted … — env re-resolved from the current secrets`) but is **refused on a
-stopped service**, so the changed-binding case is `start` *then* `restart`.
+stopped service**, so the changed-binding case is `start` *then* `restart`. If `bindings` still names `postgres/db`,
+the step-3 rebind never happened: run it now, before `start`, or the app comes up on the dirty
+database with every earlier check green.
 
 **Now apply the pre-flight finding**, because the host finally exists. Read it off the service row
 and set it into the name the app actually reads — its own name, never ours; the app has no idea
@@ -378,9 +630,17 @@ and set it into the name the app actually reads — its own name, never ours; th
 
 ```bash
 insta --agent services list                                   # the compute row's host column
-insta --agent secrets set RENDER_EXTERNAL_HOSTNAME <that host>   # or DJANGO_ALLOWED_HOSTS, or whatever it reads
+# NOTE: this is PROJECT-WIDE, not per-service (`set RENDER_EXTERNAL_HOSTNAME (project-wide)`).
+# Two compute services needing different hostnames need `--service compute/<name>`.
+insta --agent secrets set RENDER_EXTERNAL_HOSTNAME <that host>   # ONLY if that is the name AND shape it reads
 insta --agent compute restart <service>                       # env is materialized at deploy time
 ```
+
+**Match the name *and the shape*.** The pre-flight told you which variable; it also has to tell you
+whether the app wants a bare host or a full URL. Render's own Django example reads
+`RENDER_EXTERNAL_HOSTNAME` (a host); its own Strapi example reads **`RENDER_EXTERNAL_URL`** and
+feeds it to `server.url`, which needs `https://…`. Setting the wrong one of those two is silent:
+the app reads nothing and keeps its default.
 
 Set only what the app needs. Faking a *second* variable to make it believe it is still on the old
 platform is how the Render case turns a 400 into a 500 (the ladder in the Render section). Treat
@@ -393,9 +653,14 @@ way to read its host, since the value you just set is named after a platform it 
 # Compare the HOST only. Never print a DSN: it carries the password, and it lands in the
 # terminal and in your transcript.
 insta --agent compute exec <service> -- sh -c 'printenv DATABASE_URL | sed -E "s#^([a-z+]+://)[^@]*@#\\1***@#"'
+# ⚠ `compute exec` runs in `/`, NOT the image's WORKDIR. Any file check needs ABSOLUTE paths:
+#   insta --agent compute exec <svc> -- sh -c 'ls -la /app; cat /app/.nixpacks/Dockerfile'
+# A relative `ls resources` reports "No such file" on an image that has it.
 ```
 
-`insta --agent secrets bindings` reports what *should* be bound and will show the new source even while the
+`insta --agent secrets bindings --target compute/<service>` (the flag is **required**; bare it fails
+with `--target <compute/name> is required`, and note it is `--target` here but `--to` on `bind`)
+reports what *should* be bound and will show the new source even while the
 machine holds the old DSN — a false pass at the exact moment the rollback boundary is crossed. Then
 confirm the app reads **and writes** the new database.
 
@@ -424,8 +689,9 @@ data loss. "If verification fails, just point back at the source" is wrong once 
 | **Four routes get code in** | `insta --agent deploy --image` (every plane); `insta --agent deploy <dir>` — on **insta-compute** the directory is packed, uploaded and built by the build gateway, with its Dockerfile or with nixpacks when there is none, so a checkout of the source app deploys as-is; on **Fly-backed** compute it needs the dir's own Dockerfile. `insta --agent compute connect-repo <owner/repo> <service>` (attaches to an EXISTING service and builds its Dockerfile, or detects the runtime with nixpacks when there is none — `--public` needs no GitHub App, `--root-dir` handles a monorepo); or the console's repo binding, which CREATES a service rather than attaching. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta upgrade` and retry. |
 | **Postgres scales to zero** | Keep the pool's `idleTimeoutMillis` under the suspend window, or the first request after a wake fails on a dead pooled connection. |
 | **No bulk env import** | `insta --agent secrets set <name>` takes one variable per call (value as an argument or on stdin). Loop over the source's export, and drop the platform's own vars — `HEROKU_*`, `RAILWAY_*`, `DYNO`, `PORT`. |
+| **Reading secrets back adds quotes** | both `insta --agent secrets --print` and `-o <file>` emit `NAME="value"`. `docker run --env-file` does **not** strip them, so the value arrives with a literal `"` and the app fails obscurely (measured: celery's `KeyError: 'No such transport: '`). Strip the quotes, or get the value another way. |
 | **`insta --agent secrets list` prints names only** | It cannot reveal a truncated or mis-escaped value. To compare values, use `insta --agent secrets --print --json` — **not** bare `--print`, which double-quotes every value and does not escape embedded newlines, so a multi-line value breaks line-oriented parsing and every key then digests differently from the source export. |
-| **No app-level scheduler — but the DB has one** | There is no `insta schedule`. Two options. In-process (node-cron, APScheduler, whenever) inside a **web** service: keep it always-on, since a suspended service stops firing, and remember **replicas multiply every tick** (`insta --agent services scale` allows 1–10, so two replicas run each job twice). Or **`pg_cron`**, which insta postgres ships (a `pg_cron launcher` worker is already running; `CREATE EXTENSION pg_cron`) — one schedule, no replica problem, but SQL-only. |
+| **No app-level scheduler — but the DB has one** | There is no `insta schedule`. Two options. In-process (node-cron, APScheduler, whenever) inside a **web** service: keep it always-on, since a suspended service stops firing, and remember **replicas multiply every tick** (`insta --agent services scale` allows 1–10, so two replicas run each job twice). Or **`pg_cron`**, which is **preloaded but not created**: measured on prod, `shared_preload_libraries` is `pg_stat_monitor,pgaudit,pg_cron,pg_stat_statements` and `pg_available_extensions` lists `pg_cron 1.6` with a null `installed_version`, so you must run `CREATE EXTENSION pg_cron` yourself (it succeeds). One schedule, no replica problem, SQL-only — **and it needs `insta --agent db always-on on`**, because postgres defaults to scale-to-zero ("off = default scale-to-zero (idle instance suspends)") and a suspended database fires nothing. **None of this is a scheduling feature**; the platform is expected to grow one, so present these as stopgaps. |
 | **Workers** | `port === 0` is the platform's own worker convention, but `insta --agent services add --port 0` is rejected and `insta --agent template deploy` refuses `type: worker`. **Until that path is verified end to end**, give the worker a port and let it listen — the machine check is **TCP, not HTTP**, so `require('net').createServer().listen(process.env.PORT)` is enough (no framework, no `/health`). Never `--no-always-on`: a suspended worker has no inbound traffic to wake it. |
 
 ## Command mapping
@@ -468,21 +734,26 @@ command you already have:
 | In `render.yaml` | Do this |
 |---|---|
 | `databases: [{name: X}]` | `insta --agent services add postgres X` |
-| `services: [{type: web, name: X}]` | `insta --agent services add compute X --port <n>` |
-| `type: worker` | a second compute service; give it a port and leave always-on (step 6 of this file's worker notes) |
-| `type: cron` | no equivalent: `pg_cron`, or a scheduler inside an always-on compute service |
-| `type: pserv` (private service) | a compute service, but **flag it to the user**: `insta --agent services add` assigns a default domain to every compute service, so a Render private service stops being unreachable from the internet |
-| `runtime: python` / `node` / `ruby` / `go` (any non-`image`) | `insta --agent compute connect-repo <owner/repo> X` — nixpacks does what the buildpack did |
+| `databases[].diskSizeGB` | nothing to do: database disk sizing is not addressable here |
+| `services: [{type: web, name: X}]` | `insta --agent services add compute X --port <n>`. `--port` is optional and stores **`null`**, not `8080`; the 8080 default is applied at *deploy* time. Pass it anyway, and pass it again on `connect-repo` (see above) |
+| **nixpacks finds no start command** | **the repo has no `connect-repo` route at all** — every service connected to it fails identically with `build <id> failed: build command failed`, web services included. Measured on `render-examples/celery`, whose three roles live only in their `startCommand:`. Catch it with `insta --agent build <dir>` before touching the platform. **The cheap fix is a `Procfile`, not a Dockerfile** — but nixpacks honours exactly **one** entry (`web:` beats `worker:`), so one repo/root-dir yields one image and one start command for *every* service connected to it. Differentiating roles needs `--root-dir` per role, a Dockerfile per directory, or `deploy --image` per role |
+| `type: worker` | a second compute service. **Portless is prebuilt-image-only**, so read the worker notes below before promising it: `services add compute X --port 0` and `connect-repo … --port 0` are both **rejected** (`port must be an integer between 1 and 65535, got: 0`), while `insta --agent deploy --image <ref> --port 0` is **accepted** and is the only path. A repo whose worker identity *is* its `startCommand`, with no Dockerfile, has **no route through `connect-repo`** ("Build and start commands come from detection and cannot be set"). Since the archive lane shipped, the worker does have a route through the local checkout: write a `Dockerfile` whose `CMD` is the worker command and `insta --agent deploy <dir>` it — that lane builds on every plane now. Whether `deploy <dir>` accepts `--port 0` is **unmeasured** (only `deploy --image --port 0` is), so test it before promising a portless worker. Say what you measured rather than improvising |
+| `type: cron` | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
+| `type: pserv` (private service) | a compute service, but **flag it to the user**: every compute service gets a public default domain with its first successful deploy (step 1 above; `services add` alone leaves `domain: null`), so a Render private service stops being unreachable from the internet |
+| `runtime: python` / `node` / `ruby` / `go` (any non-`image`; older blueprints spell it `env:`) | `insta --agent compute connect-repo <owner/repo> X` — nixpacks does what the buildpack did |
 | `buildCommand:` | **nixpacks does not run the script**, but do not assume nothing in it happens: its Django provider runs `manage.py migrate` itself at start (measured — a full `admin, auth, contenttypes, sessions` migrate ran against the bound insta pg16 with no instruction from us). The **asset** half is what it skips, so read the script and re-home anything else: `collectstatic` or an `npm run build` needs a `Dockerfile` or nixpacks' own detected build step. A migration you want under your control rather than run at every boot belongs in `insta --agent compute exec` |
 | `startCommand:` | nixpacks picks its own, which is often not this one. If the app needs a specific server invocation (`gunicorn mysite.asgi:application -k uvicorn.workers.UvicornWorker`, a `-w` count, an ASGI vs WSGI entrypoint), that is a `Dockerfile` `CMD`, so this row can turn the whole service into the Dockerfile lane |
 | `runtime: image`, `image.url` | `insta --agent deploy --image <url> --port <n>` instead; do NOT reach for connect-repo |
 | `envVars: [{fromDatabase: {...}}]` | `insta --agent secrets bind DATABASE_URL postgres/X --to compute/Y` |
-| `envVars: [{fromService: {...}}]` | usually a plain secret: only credential-minting services can be bound |
+| `envVars: [{fromService: {...}}]` | **bind it if the target is a credential-minting service** — `redis`, `mysql` and `mongodb` all are, so `insta --agent secrets bind <NAME> redis/X --to compute/Y --source-name REDIS_URL` is right and copying the DSN as a plain secret is the anti-pattern this file warns about elsewhere. Only a `fromService` pointing at another **compute** service has to become a plain secret |
 | `envVars: [{value: V}]` | `insta --agent secrets set KEY V` |
 | `envVars: [{generateValue: true}]` | Render invented it. **Carry the existing value over, do not regenerate** — for a Django `SECRET_KEY` a new one logs out every session, and for an app's own signing keys it invalidates issued tokens |
 | `envVars: [{sync: false}]` | never in the file. Read it from the API below, or ask the user |
+| `maxmemoryPolicy:` on a redis | no insta knob. Render's own queue examples set `noeviction` deliberately, so tell the user their queue's eviction behaviour is not reproducible here |
+| `ipAllowList: []` on a datastore | no insta knob, and the default runs the **other way**: a provisioned redis came back `public=true`. A Render datastore restricted to internal connections becomes publicly addressable here, so flag it like the `pserv` row |
 | `envVarGroups:` | **not returned by the env-vars API** (see below); resolve these from the dashboard |
-| `disk: {mountPath, sizeGB}` | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>` later. It mounts at `/data` and only on the deploy *after* it is attached, so a different `mountPath` means a code or config change |
+| `disk: {mountPath, sizeGB}` | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>` later. **The disk appears when the machine is next created, so `insta --agent compute restart X` is enough — no rebuild.** Measured twice on a running volumeless service: attach, restart only, and `/data` is mounted; the platform labels that event `wake`, not `deploy`, which is the mechanism. A volume attached *before* the first deploy is present on that first deploy. (The other skill files now say "deploy or restart"; the CLI's own string still says "the next deploy", which is true but not the cheapest path — on a nixpacks service that difference is a 10-second restart versus a full rebuild.) **Do not mirror Render's `sizeGB`:** attach at the free 10Gi cap, because growing is paid-plan-only even from 1Gi to 2Gi and shrinking is impossible, so a literal small size is a one-way door |
+| `disk` holding **user uploads** | the volume is usually the wrong tool: prefer `insta --agent services add storage <n>` plus an S3 upload provider (see the addon table), which is the only option that survives scale-out. If you keep the volume, the path fix must be **in the image** — a `Dockerfile` symlink to `/data` — because a symlink made with `compute exec` is wiped on the next restart (measured). Check whether the framework can be pointed at the mount instead (Strapi: `server.dirs.public`), and note a fresh volume contains only `lost+found`, so a framework that requires its upload directory to pre-exist will crashloop until you create it |
 | `healthCheckPath` | not a knob here; insta health-checks the port |
 | `numInstances` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
 | `plan:` | `insta --agent compute limits` / `insta --agent db limits` |
@@ -545,9 +816,14 @@ So the useful expectation is not "grep for the platform variable" but **"assume 
 its own new hostname, and find out how it learns one."** Sometimes that is a variable you can set,
 often it is a literal you have to edit, and occasionally (Railway) there is nothing to do.
 
-**And there is nothing on this side for it to read.** The only variable the platform injects into a
-compute service is `PORT` (`provisioning/deploy.ts`: `const env = { PORT: String(port), ...envBundle }`)
-— everything else in the machine's env came from a secret or a binding you created. There is no
+**And there is nothing on this side for it to read.** `PORT` is the only variable the *control
+plane* adds (`provisioning/deploy.ts`: `const env = { PORT: String(port), ...envBundle }`), and
+everything else you set came from a secret or a binding. The machine env is not that short, though:
+the orchestrator adds its own, measured on a live machine — `KUBERNETES_SERVICE_HOST`,
+`KUBERNETES_PORT_443_TCP*`, `INTERNAL_DNS_*`, and per sibling service
+`INSTA_SVC_<hex>_SERVICE_HOST` / `_SERVICE_PORT`. So there **is** in-cluster discovery for siblings,
+and an app grepping its env for platform markers will see `KUBERNETES_*`. What none of them carry is
+the service's **own public domain**, which is the point here. There is no
 insta equivalent of `RENDER_EXTERNAL_HOSTNAME`, `RAILWAY_PUBLIC_DOMAIN` or `FLY_APP_NAME`, so an app
 cannot discover its own public domain here. **Read the domain off `insta --agent services list` and set it
 explicitly** into whatever name the app reads. Do not wait for the app to work it out.
@@ -626,15 +902,15 @@ file, so "cd somewhere safe" is not isolation.
 | a service built from a Dockerfile | same, `connect-repo` builds the Dockerfile when there is one |
 | a service deployed from an image | `insta --agent deploy --image <url> --port <n>` |
 | the Postgres service | `insta --agent services add postgres X` |
-| Redis / MySQL / MongoDB services | `insta --agent services add redis\|mysql\|mongodb X` |
+| Redis / MySQL / MongoDB services | `insta --agent services add redis\|mysql\|mongodb X`. **`--source-name` is mandatory** when you bind one, and it fails closed: `sourceName must be one of REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_USERNAME, REDIS_PASSWORD`. That is the guard postgres lacks, which is why the `PGHOST` footgun has no redis equivalent. Also: insta's redis DSN is **`rediss://`** (TLS), where Render's is plain `redis://` — celery/kombu rejects a `rediss://` broker without `?ssl_cert_reqs=`, so a verbatim bind is not always sufficient |
 | `deploy.startCommand` running migrations | do NOT carry it over as a startup gate; run migrations with `insta --agent compute exec` (see SKILL.md) |
 | `${{Postgres.DATABASE_URL}}` and friends | `insta --agent secrets bind DATABASE_URL postgres/X --to compute/Y` |
 | an app reading `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPORT` | a code change to read `DATABASE_URL`, per step 1 above. Railway injects these by default, so expect it |
 | `RAILWAY_*` built-ins, `PORT` | skip: render-time only, and the platform supplies `PORT` here |
 | any other variable | `insta --agent secrets set KEY` |
-| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; mounts at `/data` on the **next** deploy, and download the source contents while its service still runs |
+| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the Render `disk:` row), and download the source contents while its service still runs |
 | `numReplicas` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
-| a cron service | no equivalent: `pg_cron`, or a scheduler inside an always-on compute service |
+| a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
 | multi-region replicas | not available; one region per service, chosen with `--region` at add time |
 
 Railway's Postgres template is **18**, so step 3 is a downgrade. Its volumes carry the same caveat
@@ -642,15 +918,18 @@ as any: creating a target volume does not copy contents.
 
 **Fly.** The easiest source of the four, and the only one that is not a Postgres downgrade: Fly
 Managed Postgres runs **16**, the same major as insta's, so step 3 needs no filter. A Fly app also
-already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` works directly
-on either plane — insta-compute builds the Dockerfile on the build gateway, Fly-backed compute on
-Fly's remote builder (a CLI that predates the insta-compute lane answers `source builds are not
-supported on the insta-compute provider yet`: `insta upgrade`). `internal_port` in `fly.toml` is
-the `--port` value. `[processes]` maps onto compute services, and
+already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` from the local
+checkout works **on every plane** — the flyctl lane builds the Dockerfile on Fly-backed compute, the
+archive lane builds it on the build gateway for insta-compute — and needs no GitHub connection. A CLI
+that predates the archive lane answers `source builds are not supported on the insta-compute
+provider yet`: `insta upgrade`. `internal_port` in `fly.toml` is the `--port` value, and `[env]`
+entries become plain secrets. Note the builder **ignores the repo's `fly.toml`** on the insta-compute
+lane (`instaflybuilder` writes its own; the comment says caller config never reaches it), so nothing
+in that file affects the build here. `[processes]` maps onto compute services, and
 volumes carry the same caveat as any. **The one real obstacle is secrets:** `fly secrets list`
 returns names and digests only, because "the actual value of the secret is only available to the
-application", so there is no export. Read them off a running machine with
-the machine before you stop it — but **read one name at a time, never the whole env**:
+application", so there is no export. Read them off the running machine before you stop it — **one name at a
+time, never the whole env**, and piped so the value never reaches your terminal:
 **pipe it, never print it** — one name at a time, straight into the target, so the value never
 reaches your output:
 
