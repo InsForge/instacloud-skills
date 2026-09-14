@@ -258,6 +258,7 @@ insta --agent deploy . --port 8080                   # remote build (Dockerfile,
 insta --agent deploy --image <ref> --port 8080       # prebuilt image instead
 insta --agent compute connect-repo owner/repo app    # or: build + deploy from GitHub on every push (cloud; GitHub App in the console first, or --public)
 insta --agent compute exec app -- printenv PORT      # one-shot command on live compute (no shell/stdin)
+insta compute ssh app --setup                        # HUMANS ONLY: interactive shell via `ssh app.insta` (API keys refused; agents use `compute exec`)
 insta --agent compute volume app --size 1Gi          # attach/grow persistent /data; mounts on next deploy or `compute restart`
 insta --agent branch create feat && insta --agent branch list --json
 insta --agent logs compute --limit 100 --json        # runtime logs (--branch <b>; also redis|mysql|mongodb; db is provider-limited)
