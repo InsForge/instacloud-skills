@@ -487,10 +487,13 @@ step 1, check before restoring rather than trusting that it wrote nothing:
 T="$(insta --agent db url --group "$PG")"        # the target DSN; `$PG` is the service you restore INTO
 # A real count(*) per table across every non-system schema — NOT `n_live_tup`, which is an estimate and
 # reads 0 for a fully populated table after a stats reset (measured). Must return nothing at all.
-psql "$T" -At -c "select string_agg(format('select %L::text, count(*) from %I.%I', c.relname, n.nspname, c.relname), ' union all ')
+psql "$T" -At -c "select string_agg(format(
+    'select %L::text, count(*) from %I.%I having count(*) > 0', n.nspname||'.'||c.relname, n.nspname, c.relname),
+    ' union all ')
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where c.relkind = 'r' and n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'" \
-  | psql "$T" -At -F'|' | awk -F'|' '$2 != "0"'
+  | psql "$T" -At        # HAVING does the filtering IN SQL: no delimiter to parse, so a table whose name
+                         # contains the separator cannot hide its own row count from an awk filter
 ```
 
 A single row from a health check or a session store is enough to collide the restore. If anything
@@ -1083,15 +1086,21 @@ cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
 >
 > **InsForge Cloud is deliberately out of scope**, and not for lack of trying: a cloud project was migrated
 > successfully on the same day, rows, users and keys intact. It is excluded because a cloud project's data
-> describes capabilities a self-hosted target does not have, and one of them fails **irreversibly**. Social
-> logins configured with InsForge's shared OAuth keys are linked by `provider` + `provider_account_id`
-> (`000_create-base-tables.sql`), and that id was issued under InsForge's OAuth client; a developer who
-> registers their own client gets different subject ids, so the same human signing in lands on a NEW account
-> and the old one is orphaned with its data. There is no mapping to repair it. Edge functions
-> (`functions.definitions` rows with no Deno host), the `deployments` and `compute` schemas, analytics and the
-> managed AI credentials are all cloud-side too. Deploying a self-hosted InsForge and pouring cloud data into it
-> is only honest for a project that stayed inside the self-hostable subset — and nothing in the data says
-> whether it did. **If asked to migrate a cloud project, say this rather than adapting the steps below.**
+> describes capabilities a self-hosted target does not have, and nothing in a dump says which of them that
+> project used. Edge functions restore as `functions.definitions` rows with no Deno host to run them; the
+> `deployments` and `compute` schemas point at cloud-managed resources; analytics answers 501; the AI gateway's
+> credentials were the cloud's. Every social login needs its OAuth client re-registered and its redirect URI
+> repointed, whoever owns the keys.
+>
+> **One failure there is irreversible, but only for some providers** — a distinction worth getting right,
+> because it decides whether a project can be moved at all. Identities are keyed on
+> `provider` + `provider_account_id` (`000_create-base-tables.sql`), and that value is whatever the provider
+> calls the user: **Google** hands back `payload.sub` and **GitHub** its numeric user id, both stable for a
+> person no matter which OAuth client asks, so those identities survive a new client. **Apple** scopes its
+> `sub` to the developer *team*, so a new team yields a new id — the same human signs in and lands on a NEW
+> account while the old one is orphaned with its data, and no mapping exists to repair it. Treat
+> pairwise-identifier providers (Apple, and check Microsoft and LinkedIn before promising anything) as a hard
+> stop. **If asked to migrate a cloud project, say this rather than adapting the steps below.**
 >
 > **The pg18→pg16 downgrade in step 3 is verified end to end** against a seeded PG 18.6 source and a
 > real InstaCloud PG 16.15 target: restore exited 0 with empty stderr, and a catalog and data diff
