@@ -1000,9 +1000,12 @@ SRC_DB="$(envval POSTGRES_DB)"; SRC_DB="${SRC_DB:-insforge}"   # compose's own d
 [ -n "$JWT_SECRET" ] || { echo 'no JWT_SECRET in .env — wrong directory?' >&2; exit 1; }
 docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
 src() { docker compose exec -T postgres psql -U postgres "$SRC_DB" -v ON_ERROR_STOP=1 "$@"; }   # stop on SQL error:
-src -Atc 'select jobid from cron.job where active' > cron-active.txt   # psql exits 0 on one otherwise, and an empty
-src -c 'update cron.job set active = false'          # file would read as "no schedules" — pg_cron runs INSIDE
-# pg_cron's key is `jobid`, not `id`.               # postgres, the one container still up, so its jobs would write
+src -Atc 'select jobid from cron.job where active' > cron-active.txt || exit 1   # psql exits 0 on one otherwise,
+src -c 'update cron.job set active = false' || exit 1   # and an empty file would read as "no schedules". The
+# `|| exit 1` is the half that matters: ON_ERROR_STOP only sets an exit code, and this block has no `set -e` (which
+# would misfire on the `[ -s … ] &&` line later), so without it a failed deactivation just scrolls past — pg_cron
+# pg_cron's key is `jobid`, not `id`.               # runs INSIDE postgres, the one container still up, so its jobs
+                                                     # would keep writing across both snapshots
 # (rolling back to the source means re-running that update with `= true where jobid in (…)` there as well)
 
 # services
@@ -1065,7 +1068,9 @@ eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
 aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
 
 # 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
-docker compose exec -T postgres pg_dump -U postgres insforge > dump.sql      # pg_dump 15 against 15: nothing to filter
+docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" > dump.sql     # $SRC_DB, never a literal `insforge`:
+# pg_dump's error goes to stderr, so a wrong name leaves dump.sql EMPTY and the restore below then counts 0 errors
+# and "passes" against an empty database. pg_dump 15 against 15 needs no filtering.
 # a host pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
 psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
 errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
