@@ -22,6 +22,7 @@ The unprotected-branch defaults are:
 | `deploy` | allow | code reaching compute (and the build-token mint); also gates `compute restart` (which lands configuration through the same path) and `compute exec`, the latter paired with `secrets.read` |
 | `branch.delete` | **approve** | tearing down an environment |
 | `service.remove` | **approve** | deleting a service; also gates compute volume delete |
+| `compute.shell` | **approve** | an interactive **root shell** inside the machine, with the service's decrypted env already in it — strictly stronger than `deploy` (which ships reviewed code) and than `compute exec` (one argv, no TTY, no interactive pivot). Gates `insta compute ssh`, paired with `secrets.read`. Approval is the **default**, so an existing branch-developer policy that predates the action does not silently grant it |
 | `service.add`, `service.rename`, `branch.create` | allow | ordinary development |
 | `service.scale`, `service.upgrade`, `service.setAccess`, `project.update` | **approve** | capacity, public access and project settings |
 | `storage.read` | allow | listing a bucket, downloading, previewing |

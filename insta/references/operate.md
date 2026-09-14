@@ -212,6 +212,25 @@ machine and returns — **no interactive shell, no stdin**. Use it for a one-off
 
 `[service]` is optional under the same rule as `start`/`stop`/`status` above.
 
+## Getting an interactive shell (humans only)
+
+When `exec`'s "no interactive shell, no stdin" is the thing in your way, `insta compute ssh [service]`
+(CLI >= 0.0.71) mints a short-lived SSH certificate and prints the `ssh` command that uses it. It does
+not open the session itself.
+
+- **An agent cannot use it.** It requires an interactive login and refuses API keys with a 403,
+  pointing at `compute exec`. That is deliberate: the certificate is a bearer credential for a root
+  shell, and a shell is not a reviewable action the way one argv is. When you need a machine-run
+  command, `exec` remains the answer.
+- `--setup` does the one-time client setup and gives the service the alias `<service>.insta`, after
+  which plain `ssh api.insta`, `scp` and `-L` work and the certificate renews itself while OpenSSH
+  parses its config. Without `--setup` you get a self-contained `ssh -i ... <user>@<host>` line
+  instead, and nothing is written to `~/.ssh`.
+- Gated on **both** `compute.shell` and `secrets.read` (a shell inherits the service's decrypted
+  env), and `compute.shell` **defaults to `approve`** rather than `allow` — see governance.md.
+- **Compute-plane dependent**: a Fly-backed service has no SSH gateway and 400s naming `compute exec`
+  instead. `insta --agent manifest --json` names the plane per compute row.
+
 ## Deploy triage (URL not serving after deploy)
 
 Work the list in order — these cover ~all real failures seen so far:
