@@ -350,8 +350,8 @@ app is live and can write.
 
 **`stop` is a traffic barrier, not an execution barrier.** `insta --agent compute exec` succeeds on a
 stopped service and leaves it **live** (`status` then reads `desired=stopped live=running`), so any
-`exec` — including a verification query in step 4 — re-animates the machine. Re-`stop` after using
-it.
+`exec` — including any query you run against the target — re-animates the machine. Re-`stop` after
+using it.
 *Pass:* no write traffic at either end.
 
 **3. Copy into a CLEAN target.**
@@ -396,8 +396,9 @@ This is the sharpest trap in the whole procedure. With two postgres services a b
 `insta --agent db url` fails loudly (`error: multiple postgres services — specify one: db, db2`),
 which is the *good* outcome. The bad outcome is copy-pasting `--group db`: measured, that restores
 into, verifies, and cuts over to the **old dirty database** while every check reports success —
-`exit 0`, `grep -c '^ERROR'` → 0. Step 4's count diff does catch it (10 tables against 14), so it
-costs a restore cycle rather than data, but only if you actually run step 4 against the same `$PG`.
+`exit 0`, `grep -c '^ERROR'` → 0 — and since step 4 no longer diffs anything, **nothing downstream
+catches it either**: the app is rebound and restarted onto the dirty database with every gate green.
+Set `PG` once, at the top, and use it for every command from here to step 5.
 
 ```bash
 set -o pipefail
@@ -472,8 +473,8 @@ every guard above passes.
 2. **PG17/18 SQL inside function bodies.** `pg_dump` emits `SET check_function_bodies = false`, so
    plpgsql bodies are never parsed during a restore. `MERGE … RETURNING` and `RETURNING OLD.*`
    restore silently and fail at call time (`syntax error at or near "RETURNING"`,
-   `missing FROM-clause entry for table "old"`). **A clean restore proves nothing about functions.
-   Call every one of them once** as part of step 4.
+   `missing FROM-clause entry for table "old"`). **A clean restore proves nothing about functions** —
+   say so when you hand the database over (step 4).
 
 Also expect a catalog difference that is **not** a fidelity loss: PG18 materializes `NOT NULL` as
 `contype='n'` rows in `pg_constraint` and pg16 has none, so exclude those rows when diffing
@@ -483,7 +484,16 @@ catalogs, after confirming `attnotnull` is set on every column.
 step 1, check before restoring rather than trusting that it wrote nothing:
 
 ```bash
-psql "$T" -At -f /tmp/counts.sql        # the count query from step 4; must return nothing at all
+T="$(insta --agent db url --group "$PG")"        # the target DSN; `$PG` is the service you restore INTO
+# A real count(*) per table across every non-system schema — NOT `n_live_tup`, which is an estimate and
+# reads 0 for a fully populated table after a stats reset (measured). Must return nothing at all.
+psql "$T" -At -c "select string_agg(format(
+    'select %L::text, count(*) from %I.%I having count(*) > 0', n.nspname||'.'||c.relname, n.nspname, c.relname),
+    ' union all ')
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where c.relkind = 'r' and n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'" \
+  | psql "$T" -At        # HAVING does the filtering IN SQL: no delimiter to parse, so a table whose name
+                         # contains the separator cannot hide its own row count from an awk filter
 ```
 
 A single row from a health check or a session store is enough to collide the restore. If anything
@@ -496,114 +506,54 @@ insta's own `pg_cron` session until you `pg_terminate_backend` it, and the recre
 **loses the platform's preinstalled extensions** — read the set with
 `psql "$T" -c "select extname from pg_extension order by 1"` rather than assuming it; measured on a
 fresh staging pg16 it was `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`,
-and **not** `pgcrypto` or `uuid-ossp`, so an app wanting `gen_random_uuid()` must create it. If you do add a fresh service the
+and **not** `pgcrypto` or `uuid-ossp`, so an app calling `crypt()`, `gen_salt()` or `uuid_generate_v4()`
+must create the extension that owns it. (`gen_random_uuid()` is **not** an example of this: it has been core
+since PG13 and needs no extension on pg16.) If you do add a fresh service the
 DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
-status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both.
-*Pass:* `grep -c '^ERROR'` is 0 **and** step 4's fidelity checks match. Exit 0 alone proves nothing.
-**4. Verify the data.**
+status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both. The `^ERROR`
+pattern above is correct **for these two restores because they are piped** — psql reading stdin emits
+a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as the InsForge section does)
+prefixes every one with `psql:<file>:<line>:`, so match both spellings when you are not sure which
+form you ran: `grep -cE '^(psql:.*)?ERROR'`.
+*Pass:* `grep -c '^ERROR'` is 0. Exit 0 alone does not prove it — the guards above are what make that
+count trustworthy.
+**4. Confirm the restore, and hand verification back.**
 
-**Count every table exactly, and never from `pg_stat_user_tables`.** `n_live_tup` is an estimate:
-it reads **0 for a fully populated table** once statistics have been reset (measured — 3,000 rows,
-`pg_stat_reset()`, estimate `0`), and stats are also lost across some restarts. Two sides both
-reporting 0 would compare equal and verify nothing. This query counts each table for real, in one
-round trip, and covers **all** schemas rather than a top-N slice:
+*Pass:* **the restore reported zero errors.** That is the whole of step 4. On the restore log,
+`grep -cE '^(psql:.*)?ERROR' restore.log` is `0` — **both spellings, because the prefix depends on how
+psql was invoked**: a piped restore emits bare `ERROR:`, `psql -f dump.sql` emits
+`psql:dump.sql:<line>: ERROR:`, and a pattern anchored to only one of them reports a clean restore for
+a failed one. The step-3 guards (`ON_ERROR_STOP`, `pipefail`) are what make that count trustworthy.
+Nothing else here is yours to assert.
 
-```bash
-cat > /tmp/counts.sql <<'SQL'
-select n.nspname || '.' || c.relname as tbl,
-       (xpath('/row/c/text()',
-              query_to_xml(format('select count(*) as c from %I.%I', n.nspname, c.relname),
-                           false, true, '')))[1]::text::bigint as rows
-from pg_class c
-join pg_namespace n on n.oid = c.relnamespace
-where c.relkind = 'r'
-  and n.nspname not in ('pg_catalog', 'information_schema')
-  and n.nspname not like 'pg_toast%'
-order by 1;
-SQL
+**Whether the application is correct on the new database is the developer's call, not this runbook's.**
+We move the bytes and prove the move did not error; only they know which rows matter, which behaviour
+is load-bearing, and what "working" means for their product. Do not invent acceptance criteria on their
+behalf, and do not claim the migration is verified — say the restore completed clean, then hand them
+the connection and let them check.
 
-T="$(insta --agent db url --group "$PG")"             # scriptable; `insta --agent db connect` is interactive
-psql "$T"          -At -F, -f /tmp/counts.sql | sort > /tmp/target.csv
-psql "$SOURCE_URL" -At -F, -f /tmp/counts.sql | sort > /tmp/source.csv
-diff /tmp/source.csv /tmp/target.csv && echo "row counts identical"
-```
+**Three things to tell them to look at**, because each has bitten a real migration and none of them
+raises an error at restore time:
 
-If you test the diff by deleting rows, pick **unreferenced** ones: a correctly restored foreign key
-refuses the delete (`update or delete on table "auth_user" violates foreign key constraint …`),
-which is itself evidence the restore worked.
+1. **Functions are never parsed during a restore.** `pg_dump` emits `SET check_function_bodies = false`,
+   so a body holding PG17/18 SQL (`MERGE … RETURNING`, `RETURNING OLD.*`) restores silently and fails
+   the first time it is called. After a **major-version downgrade**, tell them to exercise their
+   functions before they trust the database.
+2. **Named `NOT NULL` constraints from PG18 lose their names** on the way to pg16 (the column stays
+   `NOT NULL`; the `pg_constraint` row does not survive), so a later
+   `ALTER TABLE … DROP CONSTRAINT <name>` will fail on the migrated database only.
+3. **The target's extension set is not the source's.** insta preinstalls its own (measured on a fresh
+   staging pg16: `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`) and does
+   **not** ship `pgcrypto` or `uuid-ossp`, so an app calling something those own — `crypt()`, `gen_salt()`,
+   `uuid_generate_v4()` — needs `CREATE EXTENSION` even though the restore was clean. Not
+   `gen_random_uuid()`, which is core from PG13 on.
 
-It enumerates from `pg_class`, not from a stats view, so a reset cannot hide a table from it either.
-Verified after `pg_stat_reset()`: exact counts for a 1,000-row table, a 7-row table, an **empty**
-table and a table in a non-`public` schema, with views excluded. An empty table is worth having in
-the diff: a top-N-by-size query never shows one, and "the table is there but empty" is a migration
-failure that looks like nothing at all.
-
-Then the rest:
-
-```bash
-psql "$T" -c "select sequencename, last_value from pg_sequences order by sequencename"
-psql "$T" -c "select extname from pg_extension order by extname"
-psql "$T" -c "select max(id), max(created_at) from <append_only_table>"
-```
-
-Run those against the source too and diff. **"Extensions present" cannot fail** on its own — a
-fresh insta postgres already ships several, so the dump's `CREATE EXTENSION IF NOT EXISTS` is a
-no-op for those. **Read the set, do not assume it** — measured on staging pg16:
-`pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`, with **no `pgcrypto` and no
-`uuid-ossp`**, despite an earlier version of this file listing both. Compare the
-**sets** source-vs-target instead of asserting presence.
-
-**After a major-version downgrade, add the schema checks**, because that is where a downgrade loses
-things quietly:
-
-```bash
-psql "$T" -At -F'|' -c "select n.nspname||'.'||c.conname, c.contype, c.convalidated
-      from pg_constraint c join pg_namespace n on n.oid = c.connamespace
-      where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
-        and c.contype <> 'n' order by 1"
-psql "$T" -At -F'|' -c "select schemaname||'.'||indexname, indexdef from pg_indexes
-      where schemaname not in ('pg_catalog','information_schema') order by 1"
-psql "$T" -At -F'|' -c "select format('%I.%I(%s)', n.nspname, p.proname,
-                                     pg_get_function_identity_arguments(p.oid)),
-             case when p.prorettype in ('trigger'::regtype, 'event_trigger'::regtype)
-                  then 'trigger' else 'callable' end
-      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname not in ('pg_catalog','information_schema')
-        and not exists (select 1 from pg_depend d
-                        where d.objid = p.oid and d.classid = 'pg_proc'::regclass
-                          and d.deptype = 'e')
-      order by 1"
-```
-
-**All three cover every non-system schema, not just `public`.** An app with its own schema can lose
-a constraint, an index definition or a callable function there and still pass a `public`-only check,
-which is the same blind spot the row counts had. The function query builds its name with `format`
-rather than `oid::regprocedure`, because the latter omits the schema for anything on the
-`search_path` — so a source and target with different search paths would diff as different while
-being identical. Verified: identical output across a `set search_path` change, with objects in both
-`public` and a second schema.
-
-Exclude `contype = 'n'` rows, since PG18 records `NOT NULL` there and pg16 does not. Diff `indexdef`
-as text, and confirm `convalidated` is true rather than merely that the constraint exists.
-**The `pg_depend … deptype = 'e'` exclusion is not optional.** Extensions install their functions
-into `public`, so without it the target lists every extension's functions while the source lists
-none: measured **139 rows against 2** on a real insta postgres, a 137-line false-positive diff on
-*every* migration. A throwaway pg16 with only `pgcrypto` present already went from 2 rows to **38**.
-An agent facing that either escalates for nothing or learns to ignore the check.
-
-Then **call every function the third query lists, once** — their bodies were never parsed during the
-restore, so this is the only thing that catches PG17/18 SQL inside them. **Except those marked
-`trigger`:** calling one directly fails with `trigger functions can only be called as triggers`
-(event-trigger functions are marked the same way, and fail the same way). Exercise a row trigger's
-function with DML against its table, and an event trigger's with a DDL statement that matches its
-`pg_event_trigger` row: `evtevent` is the event class (`ddl_command_end`, `sql_drop`, …) and
-`evttags` the command tags it filters on, so a `CREATE TABLE` plus `DROP TABLE` in a throwaway
-schema fires most of them.
-*Pass:* the per-table count diff is **empty** (every table, exact, both sides); latest rows match;
-sequences at or above the source's; extension sets reconciled as a **subset** (source minus target empty — a plain diff is non-empty on every migration, since the target always carries the preinstalled ones);
-after a downgrade, constraints validated, `indexdef`s equal, and every function callable.
+If they want a fidelity check of their own, the cheapest honest one is a per-table row count on both
+sides — `select relname, n_live_tup` is **not** it (`n_live_tup` is an estimate and reads `0` for a
+fully populated table after `pg_stat_reset()`, measured), so a real `count(*)` per table, from
+`pg_class` across every non-system schema. Offer that query if asked; do not run it as a gate.
 
 **5. Bring the app onto the target — and `start` does NOT re-resolve env.**
 
@@ -942,7 +892,8 @@ fly ssh console -a <app> -C 'printenv <NAME>' | tr -d '\r\n' | insta --agent sec
 And never run the `printenv` on its own to "check" a value first; that is the leak. If you cannot
 pipe, have the user re-enter the value instead.
 
-**InsForge (self-hosted).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
+**InsForge (self-hosted only — see the verification note at the end of this file for why InsForge Cloud is
+not a supported source).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
 `postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
 built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
 database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
@@ -974,6 +925,14 @@ compiled preload library and managed instances cannot load one.
 `.env` go onto the target **verbatim**: sessions stay valid, `system.secrets` (JWT keypair, API keys) decrypts, the
 app's anon key is unchanged. `ENCRYPTION_KEY` falls back to `JWT_SECRET` when unset, so a source that never set it
 must keep `JWT_SECRET` for both reasons. Read them from the file, never print them.
+
+**Four of the lines below are STEPS, not checks, and the difference matters now that verification is
+the developer's.** A check confirms the move worked; a step is something that, left out, makes the move
+wrong with nothing to notice: the dump-completeness guard (a wrong database name yields an empty file
+that restores with zero errors), `UPDATE cron.job SET database` (the dump names the source's database,
+so every schedule silently stops), binding **both** bucket names (an older source writes uploads to
+local disk while the bucket stays empty), and copying files before dumping. Never drop these on the
+grounds that the developer will verify.
 
 **Order matters three times.** (1) **Every source writer stops before EITHER snapshot is taken.** Step 2 of the
 ordered cutover applies here in full: the files and the database are two halves of one state, so an upload that
@@ -1082,7 +1041,7 @@ grep -q '^-- PostgreSQL database dump complete' dump.sql \
 # marker also catches a dump truncated by a disk filling up. pg_dump 15 against 15 needs no filtering; a host
 # pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
 psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
-errs="$(grep -c '^psql:.*ERROR' restore.log || true)"                        # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
+errs="$(grep -cE '^(psql:.*)?ERROR' restore.log || true)"                    # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
 psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
 [ -s cron-active.txt ] && psql "$PG" -v ON_ERROR_STOP=1 -c "UPDATE cron.job SET active = true WHERE jobid IN ($(paste -sd, cron-active.txt))"
@@ -1096,111 +1055,26 @@ insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/ap
 insta --agent compute restart api
 ```
 
-**If the source is InsForge Cloud rather than self-hosted**, the shape holds and seven things change. Measured end
-to end on 2026-09-14 against a real cloud project (backend 2.2.6, PG 15.18 → insta pg 16): every table row-for-row
-identical, users, migrations and `system.secrets` counts equal, anon reads 200 through both the InsForge API and
-PostgREST.
-
-1. **There is no `.env` and no container — the backend serves the migration inputs.** `secrets get <KEY>` returns
-   `JWT_SECRET`, `ANON_KEY`, `API_KEY` and `JWT_PRIVATE_KEY`; `db connection-string` (cloud only) returns the DSN
-   for a host `pg_dump` over TLS. **Both print the credential to stdout, so neither may be run bare** — the same
-   rule as `fly ssh console -C printenv`: pipe each value straight into its destination, and capture the DSN into a
-   mode-600 file you never `cat`:
-
-   ```bash
-   umask 077                                         # everything written below is 600
-   ifc() { npx -y @insforge/cli --json "$@"; }
-   for p in JWT_SECRET:JWT_SECRET API_KEY:ACCESS_API_KEY ANON_KEY:ACCESS_ANON_KEY; do
-     v="$(ifc secrets get "${p%%:*}" | jq -r '.value // empty')"   # `// empty` prints NOTHING for a missing key.
-     [ -n "$v" ] || { echo "source returned no ${p%%:*}" >&2; exit 1; }   # `jq -e` would still print `null` and,
-     printf '%s' "$v" | insta --agent secrets set "${p##*:}" --service compute/api   # with no pipefail here, the
-   done                                              # pipeline's status is `secrets set`'s — storing "null" as
-   ifc db connection-string | jq -r '.connectionString // empty' > src.dsn   # the anon key, silently. Check first.
-   [ -s src.dsn ] || { echo 'no connection string — is this a cloud project, and is its backend up?' >&2; exit 1; }
-
-   # libpq env, never argv: `psql "$(cat src.dsn)"` expands BEFORE psql runs, so the DSN lands in the command line
-   # where `ps` shows it to every local user. PGHOST/PGPASSWORD/… do not appear there.
-   python3 - src.dsn > src.pgenv <<'PY2'
-   import sys, shlex, urllib.parse as u
-   d = u.urlsplit(open(sys.argv[1]).read().strip()); q = dict(u.parse_qsl(d.query))
-   for k, v in (("PGHOST", d.hostname), ("PGPORT", d.port or 5432), ("PGDATABASE", (d.path or "/").lstrip("/")),
-                ("PGUSER", u.unquote(d.username or "")), ("PGPASSWORD", u.unquote(d.password or "")),
-                ("PGSSLMODE", q.get("sslmode", "require"))):
-       print(f"export {k}={shlex.quote(str(v))}")
-   PY2
-   . ./src.pgenv                                     # psql and pg_dump below take NO connection argument
-   SRC() { psql -X "$@"; }                           # …and neither does the dump: `pg_dump > dump-raw.sql`
-   ```
-
-   **`ENCRYPTION_KEY` is absent on cloud, and must stay
-   absent** — measured, `sha256(current_setting('app.encryption_key'))` equals `sha256(JWT_SECRET)`, i.e. the cloud
-   runs on the documented fallback, so carrying `JWT_SECRET` alone is sufficient. It is sufficient in the strong
-   sense: on the target `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and `JWT_KEY_ID` all came back **byte-identical**,
-   and a fresh login minted RS256 under the *source's* `kid` — **no user has to log in again**. Everything is gated
-   on that one HTTP surface, so `curl -fsS <host>/api/health` must be 200 before you start; if it is not, the
-   migration cannot begin and only the project's owner can fix it.
-2. **`ROOT_ADMIN_USERNAME` and `ROOT_ADMIN_PASSWORD` are not retrievable, and the backend refuses to boot without
-   them.** They live only in the source's env (`auth.service.ts` compares against `process.env`) and are in no dump.
-   Generate new ones; nothing is lost, because they authenticate the dashboard's root admin and not any user row.
-   **The failure is badly disguised:** a first deploy without them fails as
-   `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
-   serving at all. `insta --agent logs compute <svc>` carries the real line.
-3. **The files come out over the S3 gateway — there is no volume to `docker compose cp`.** Skipping this is the
-   one way to produce a migration that looks clean and is not: the dump carries `storage.buckets` and
-   `storage.objects`, so a target restored without the bytes lists every file and serves none. InsForge Storage
-   speaks S3 at `https://<app-key>.<region>.insforge.app/storage/v1/s3` (2.0.9+, **path-style only**, cloud only).
-   Minting a key there is **the one write this path makes on the source**; delete it when you are done.
-
-   ```bash
-   ifc storage s3-keys create --description migration > src-s3.json     # secret shown ONCE; 600 by the umask above
-   SRC_EP="https://<app-key>.<region>.insforge.app/storage/v1/s3"
-   src_n="$(SRC -Atc 'select count(*) from storage.objects')"           # count BEFORE, from the source itself
-   for b in $(ifc storage buckets | jq -r '.[].name'); do               # one sync per bucket: the source has real
-     AWS_ACCESS_KEY_ID="$(jq -r .data.accessKeyId src-s3.json)" \       # buckets, the target has ONE with prefixes
-     AWS_SECRET_ACCESS_KEY="$(jq -r .data.secretAccessKey src-s3.json)" \
-       aws s3 sync "s3://$b/" "./storage-data/$b/" --endpoint-url "$SRC_EP" || exit 1
-   done
-   [ "$(find ./storage-data -type f | wc -l | tr -d ' ')" = "$src_n" ] \
-     || { echo "downloaded $(find ./storage-data -type f | wc -l) of $src_n objects — do NOT dump" >&2; exit 1; }
-   ifc storage s3-keys delete "$(jq -r .data.id src-s3.json)"           # the source goes back as it was
-   ```
-
-   Then upload with the same `aws s3 sync … s3://$S3_BUCKET/local/` as the self-hosted path, and re-check the count
-   on the target before moving on. **Both checks are fail-closed on purpose:** `aws s3 sync` exits 0 on an empty
-   source, and so does a restore of metadata with no bytes behind it. Measured only in part — the cloud project
-   tested had **no objects**, so the gateway path above is derived from InsForge's own S3 documentation and
-   verified on the target side only. Treat a cloud source that holds objects as **unproven**: run the two counts,
-   and stop if they disagree.
-4. **You cannot quiesce a cloud source.** There is no `compose stop`, no project pause, and deactivating `cron.job`
-   would itself be a write on someone's production database. Read the exposure first, through the DSN —
-   `select count(*) from cron.job where active` and the `schedules` tables — then keep the cutover window short and
-   freeze at the application level instead. The measured source had 2 internal cleanup jobs and no user schedules;
-   a source with user schedules writing app rows cannot be migrated consistently this way.
-5. **Read the `insforge.*` GUCs off the live source, not out of the repo.** They drift:
-   `select current_setting('insforge.internal_schemas', true)` on the measured source listed a schema the checked-in
-   `postgresql.conf` does not. `db query --unrestricted` is **disabled** on cloud projects and the restricted mode
-   denies the `cron` schema, so use the DSN for anything beyond ordinary reads.
-6. **Deploy the tag, not the version string.** The API reports `service_version` `2.2.6`; the image is
-   `ghcr.io/insforge/insforge-oss:v2.2.6` and the bare number 404s.
-7. **The migrated project stops being a cloud project, and InsForge itself behaves differently.**
-   `isCloudEnvironment()` (`backend/src/utils/environment.ts`) is true only when `AWS_INSTANCE_PROFILE_NAME` is
-   set, which it is not here — so the result is a **self-hosted InsForge holding cloud data**, and the routes that
-   branch on it flip. What the user LOSES, because the cloud control plane provided it and the container does not:
-   **shared OAuth keys** (`useSharedKey` is refused with `Shared OAuth keys are not enabled in this environment`, so
-   every social login needs its own client id and secret — this is the one that logs real users out of a real app),
-   the managed OpenRouter key behind the AI gateway, and the managed analytics and webscraper credentials; each
-   now demands the user's own. What it GAINS: `/api/database/backups` and `/api/database/config`, which cloud
-   withholds because its own control plane owns them. Enumerate this for the user **before** the cutover, not after.
-
-**One more thing to tell the user before the cutover, either source:** the target inherits the source's auth
+**One more thing to tell the user before the cutover:** the target inherits the source's auth
 configuration, so a source with email verification on and no SMTP configured produces a target where existing users
 are fine but **new signups cannot log in** (`403 Email verification required`, `accessToken: null`). Measured.
 Configure SMTP or turn verification off before you hand the app over.
 
-*Pass:* `GET /api/health` → `{"status":"ok","version":"<v>"}`; admin login 200; `GET /api/database/tables` lists the
-source's tables; the rows read with the anon key; a migrated user logs in with the **original** password;
-`storage.objects` row count equals the objects under `local/` in the bucket; a public object downloads anonymously
-(302 to a presigned URL), a private one is 401 anonymous and 200 with a session; `system.migrations` counts match.
+*Pass:* the restore reported zero errors, **the backend booted on the source's own version** —
+`GET /api/health` returns `{"status":"ok","version":"<v>"}` and the boot log says
+`No migrations to run! Migrations complete!` — and `system.migrations` counts match. That third one is
+nearly free and worth keeping *here* specifically: InsForge owns this schema, so its own ledger
+agreeing is the schema's author confirming the restore, which no generic app can offer. Everything
+past that — do my bookings show up, can my users sign in, do my files download — is the developer's,
+as in step 4.
+
+**Two properties this path has, measured rather than re-checked per migration.** Say them; do not turn
+them into gates. (a) **Sessions survive**: on both runs `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and
+`JWT_KEY_ID` came back byte-identical on the target and a fresh login minted RS256 under the source's
+own `kid`, so nobody logs in again and no OAuth or API key is re-entered. (b) **Files arrive intact**:
+public objects download anonymously through a presigned redirect, private ones 401 anonymous and 200
+with a session, sha256 equal to source.
+
 Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged. If step 1 of the ordered cutover
 proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
 `PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
@@ -1211,10 +1085,25 @@ cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
 > Postgres: the cutover ordering, the guard behaviour in step 3, `start` not re-resolving env, the
 > `secrets set` stdin/argument asymmetry, and the refusal messages quoted above. **Not verified:** any
 > end-to-end migration from Render, Railway, Fly or Heroku itself, the portless-worker path, and volume data
-> movement. (Both InsForge paths above were migrated end to end on 2026-09-14: self-hosted with its files, and a
-> real InsForge Cloud project. The cloud source held **no objects**, so its S3-gateway export step is derived from
-> InsForge's own documentation and verified on the target side only — a cloud source with files is unproven, which
-> is why that step is written to stop on a count mismatch.)
+> movement. (The self-hosted InsForge path above was migrated end to end, files included, on 2026-09-14.)
+>
+> **InsForge Cloud is deliberately out of scope**, and not for lack of trying: a cloud project was migrated
+> successfully on the same day, rows, users and keys intact. It is excluded because a cloud project's data
+> describes capabilities a self-hosted target does not have, and nothing in a dump says which of them that
+> project used. Edge functions restore as `functions.definitions` rows with no Deno host to run them; the
+> `deployments` and `compute` schemas point at cloud-managed resources; analytics answers 501; the AI gateway's
+> credentials were the cloud's. Every social login needs its OAuth client re-registered and its redirect URI
+> repointed, whoever owns the keys.
+>
+> **One failure there is irreversible, but only for some providers** — a distinction worth getting right,
+> because it decides whether a project can be moved at all. Identities are keyed on
+> `provider` + `provider_account_id` (`000_create-base-tables.sql`), and that value is whatever the provider
+> calls the user: **Google** hands back `payload.sub` and **GitHub** its numeric user id, both stable for a
+> person no matter which OAuth client asks, so those identities survive a new client. **Apple** scopes its
+> `sub` to the developer *team*, so a new team yields a new id — the same human signs in and lands on a NEW
+> account while the old one is orphaned with its data, and no mapping exists to repair it. Treat
+> pairwise-identifier providers (Apple, and check Microsoft and LinkedIn before promising anything) as a hard
+> stop. **If asked to migrate a cloud project, say this rather than adapting the steps below.**
 >
 > **The pg18→pg16 downgrade in step 3 is verified end to end** against a seeded PG 18.6 source and a
 > real InstaCloud PG 16.15 target: restore exited 0 with empty stderr, and a catalog and data diff
