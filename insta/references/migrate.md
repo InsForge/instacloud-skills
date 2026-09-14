@@ -350,8 +350,8 @@ app is live and can write.
 
 **`stop` is a traffic barrier, not an execution barrier.** `insta --agent compute exec` succeeds on a
 stopped service and leaves it **live** (`status` then reads `desired=stopped live=running`), so any
-`exec` — including a verification query in step 4 — re-animates the machine. Re-`stop` after using
-it.
+`exec` — including any query you run against the target — re-animates the machine. Re-`stop` after
+using it.
 *Pass:* no write traffic at either end.
 
 **3. Copy into a CLEAN target.**
@@ -396,8 +396,9 @@ This is the sharpest trap in the whole procedure. With two postgres services a b
 `insta --agent db url` fails loudly (`error: multiple postgres services — specify one: db, db2`),
 which is the *good* outcome. The bad outcome is copy-pasting `--group db`: measured, that restores
 into, verifies, and cuts over to the **old dirty database** while every check reports success —
-`exit 0`, `grep -c '^ERROR'` → 0. Step 4's count diff does catch it (10 tables against 14), so it
-costs a restore cycle rather than data, but only if you actually run step 4 against the same `$PG`.
+`exit 0`, `grep -c '^ERROR'` → 0 — and since step 4 no longer diffs anything, **nothing downstream
+catches it either**: the app is rebound and restarted onto the dirty database with every gate green.
+Set `PG` once, at the top, and use it for every command from here to step 5.
 
 ```bash
 set -o pipefail
@@ -472,8 +473,8 @@ every guard above passes.
 2. **PG17/18 SQL inside function bodies.** `pg_dump` emits `SET check_function_bodies = false`, so
    plpgsql bodies are never parsed during a restore. `MERGE … RETURNING` and `RETURNING OLD.*`
    restore silently and fail at call time (`syntax error at or near "RETURNING"`,
-   `missing FROM-clause entry for table "old"`). **A clean restore proves nothing about functions.
-   Call every one of them once** as part of step 4.
+   `missing FROM-clause entry for table "old"`). **A clean restore proves nothing about functions** —
+   say so when you hand the database over (step 4).
 
 Also expect a catalog difference that is **not** a fidelity loss: PG18 materializes `NOT NULL` as
 `contype='n'` rows in `pg_constraint` and pg16 has none, so exclude those rows when diffing
@@ -483,7 +484,8 @@ catalogs, after confirming `attnotnull` is set on every column.
 step 1, check before restoring rather than trusting that it wrote nothing:
 
 ```bash
-psql "$T" -At -f /tmp/counts.sql        # the count query from step 4; must return nothing at all
+# a real count(*) per table across every non-system schema (NOT n_live_tup); must return nothing at all
+psql "$T" -At -f /tmp/counts.sql
 ```
 
 A single row from a health check or a session store is enough to collide the restore. If anything
@@ -501,109 +503,39 @@ DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
 status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both.
-*Pass:* `grep -c '^ERROR'` is 0 **and** step 4's fidelity checks match. Exit 0 alone proves nothing.
-**4. Verify the data.**
+*Pass:* `grep -c '^ERROR'` is 0. Exit 0 alone does not prove it — the guards above are what make that
+count trustworthy.
+**4. Confirm the restore, and hand verification back.**
 
-**Count every table exactly, and never from `pg_stat_user_tables`.** `n_live_tup` is an estimate:
-it reads **0 for a fully populated table** once statistics have been reset (measured — 3,000 rows,
-`pg_stat_reset()`, estimate `0`), and stats are also lost across some restarts. Two sides both
-reporting 0 would compare equal and verify nothing. This query counts each table for real, in one
-round trip, and covers **all** schemas rather than a top-N slice:
+*Pass:* **the restore reported zero errors.** That is the whole of step 4. `grep -c '^psql:.*ERROR'`
+on the restore log is `0`, and the guards in step 3 (`ON_ERROR_STOP`, `pipefail`, the dump-completeness
+check) held. Nothing else here is yours to assert.
 
-```bash
-cat > /tmp/counts.sql <<'SQL'
-select n.nspname || '.' || c.relname as tbl,
-       (xpath('/row/c/text()',
-              query_to_xml(format('select count(*) as c from %I.%I', n.nspname, c.relname),
-                           false, true, '')))[1]::text::bigint as rows
-from pg_class c
-join pg_namespace n on n.oid = c.relnamespace
-where c.relkind = 'r'
-  and n.nspname not in ('pg_catalog', 'information_schema')
-  and n.nspname not like 'pg_toast%'
-order by 1;
-SQL
+**Whether the application is correct on the new database is the developer's call, not this runbook's.**
+We move the bytes and prove the move did not error; only they know which rows matter, which behaviour
+is load-bearing, and what "working" means for their product. Do not invent acceptance criteria on their
+behalf, and do not claim the migration is verified — say the restore completed clean, then hand them
+the connection and let them check.
 
-T="$(insta --agent db url --group "$PG")"             # scriptable; `insta --agent db connect` is interactive
-psql "$T"          -At -F, -f /tmp/counts.sql | sort > /tmp/target.csv
-psql "$SOURCE_URL" -At -F, -f /tmp/counts.sql | sort > /tmp/source.csv
-diff /tmp/source.csv /tmp/target.csv && echo "row counts identical"
-```
+**Three things to tell them to look at**, because each has bitten a real migration and none of them
+raises an error at restore time:
 
-If you test the diff by deleting rows, pick **unreferenced** ones: a correctly restored foreign key
-refuses the delete (`update or delete on table "auth_user" violates foreign key constraint …`),
-which is itself evidence the restore worked.
+1. **Functions are never parsed during a restore.** `pg_dump` emits `SET check_function_bodies = false`,
+   so a body holding PG17/18 SQL (`MERGE … RETURNING`, `RETURNING OLD.*`) restores silently and fails
+   the first time it is called. After a **major-version downgrade**, tell them to exercise their
+   functions before they trust the database.
+2. **Named `NOT NULL` constraints from PG18 lose their names** on the way to pg16 (the column stays
+   `NOT NULL`; the `pg_constraint` row does not survive), so a later
+   `ALTER TABLE … DROP CONSTRAINT <name>` will fail on the migrated database only.
+3. **The target's extension set is not the source's.** insta preinstalls its own (measured on a fresh
+   staging pg16: `pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`) and does
+   **not** ship `pgcrypto` or `uuid-ossp`, so an app calling `gen_random_uuid()` needs
+   `CREATE EXTENSION` even though the restore was clean.
 
-It enumerates from `pg_class`, not from a stats view, so a reset cannot hide a table from it either.
-Verified after `pg_stat_reset()`: exact counts for a 1,000-row table, a 7-row table, an **empty**
-table and a table in a non-`public` schema, with views excluded. An empty table is worth having in
-the diff: a top-N-by-size query never shows one, and "the table is there but empty" is a migration
-failure that looks like nothing at all.
-
-Then the rest:
-
-```bash
-psql "$T" -c "select sequencename, last_value from pg_sequences order by sequencename"
-psql "$T" -c "select extname from pg_extension order by extname"
-psql "$T" -c "select max(id), max(created_at) from <append_only_table>"
-```
-
-Run those against the source too and diff. **"Extensions present" cannot fail** on its own — a
-fresh insta postgres already ships several, so the dump's `CREATE EXTENSION IF NOT EXISTS` is a
-no-op for those. **Read the set, do not assume it** — measured on staging pg16:
-`pg_stat_monitor`, `pg_stat_statements`, `pgaudit`, `plpgsql`, `vector`, with **no `pgcrypto` and no
-`uuid-ossp`**, despite an earlier version of this file listing both. Compare the
-**sets** source-vs-target instead of asserting presence.
-
-**After a major-version downgrade, add the schema checks**, because that is where a downgrade loses
-things quietly:
-
-```bash
-psql "$T" -At -F'|' -c "select n.nspname||'.'||c.conname, c.contype, c.convalidated
-      from pg_constraint c join pg_namespace n on n.oid = c.connamespace
-      where n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'
-        and c.contype <> 'n' order by 1"
-psql "$T" -At -F'|' -c "select schemaname||'.'||indexname, indexdef from pg_indexes
-      where schemaname not in ('pg_catalog','information_schema') order by 1"
-psql "$T" -At -F'|' -c "select format('%I.%I(%s)', n.nspname, p.proname,
-                                     pg_get_function_identity_arguments(p.oid)),
-             case when p.prorettype in ('trigger'::regtype, 'event_trigger'::regtype)
-                  then 'trigger' else 'callable' end
-      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname not in ('pg_catalog','information_schema')
-        and not exists (select 1 from pg_depend d
-                        where d.objid = p.oid and d.classid = 'pg_proc'::regclass
-                          and d.deptype = 'e')
-      order by 1"
-```
-
-**All three cover every non-system schema, not just `public`.** An app with its own schema can lose
-a constraint, an index definition or a callable function there and still pass a `public`-only check,
-which is the same blind spot the row counts had. The function query builds its name with `format`
-rather than `oid::regprocedure`, because the latter omits the schema for anything on the
-`search_path` — so a source and target with different search paths would diff as different while
-being identical. Verified: identical output across a `set search_path` change, with objects in both
-`public` and a second schema.
-
-Exclude `contype = 'n'` rows, since PG18 records `NOT NULL` there and pg16 does not. Diff `indexdef`
-as text, and confirm `convalidated` is true rather than merely that the constraint exists.
-**The `pg_depend … deptype = 'e'` exclusion is not optional.** Extensions install their functions
-into `public`, so without it the target lists every extension's functions while the source lists
-none: measured **139 rows against 2** on a real insta postgres, a 137-line false-positive diff on
-*every* migration. A throwaway pg16 with only `pgcrypto` present already went from 2 rows to **38**.
-An agent facing that either escalates for nothing or learns to ignore the check.
-
-Then **call every function the third query lists, once** — their bodies were never parsed during the
-restore, so this is the only thing that catches PG17/18 SQL inside them. **Except those marked
-`trigger`:** calling one directly fails with `trigger functions can only be called as triggers`
-(event-trigger functions are marked the same way, and fail the same way). Exercise a row trigger's
-function with DML against its table, and an event trigger's with a DDL statement that matches its
-`pg_event_trigger` row: `evtevent` is the event class (`ddl_command_end`, `sql_drop`, …) and
-`evttags` the command tags it filters on, so a `CREATE TABLE` plus `DROP TABLE` in a throwaway
-schema fires most of them.
-*Pass:* the per-table count diff is **empty** (every table, exact, both sides); latest rows match;
-sequences at or above the source's; extension sets reconciled as a **subset** (source minus target empty — a plain diff is non-empty on every migration, since the target always carries the preinstalled ones);
-after a downgrade, constraints validated, `indexdef`s equal, and every function callable.
+If they want a fidelity check of their own, the cheapest honest one is a per-table row count on both
+sides — `select relname, n_live_tup` is **not** it (`n_live_tup` is an estimate and reads `0` for a
+fully populated table after `pg_stat_reset()`, measured), so a real `count(*)` per table, from
+`pg_class` across every non-system schema. Offer that query if asked; do not run it as a gate.
 
 **5. Bring the app onto the target — and `start` does NOT re-resolve env.**
 
@@ -975,6 +907,14 @@ compiled preload library and managed instances cannot load one.
 app's anon key is unchanged. `ENCRYPTION_KEY` falls back to `JWT_SECRET` when unset, so a source that never set it
 must keep `JWT_SECRET` for both reasons. Read them from the file, never print them.
 
+**Four of the lines below are STEPS, not checks, and the difference matters now that verification is
+the developer's.** A check confirms the move worked; a step is something that, left out, makes the move
+wrong with nothing to notice: the dump-completeness guard (a wrong database name yields an empty file
+that restores with zero errors), `UPDATE cron.job SET database` (the dump names the source's database,
+so every schedule silently stops), binding **both** bucket names (an older source writes uploads to
+local disk while the bucket stays empty), and copying files before dumping. Never drop these on the
+grounds that the developer will verify.
+
 **Order matters three times.** (1) **Every source writer stops before EITHER snapshot is taken.** Step 2 of the
 ordered cutover applies here in full: the files and the database are two halves of one state, so an upload that
 lands between them is a row in the dump with no object behind it, and a delete is an orphan. `docker compose stop
@@ -1197,10 +1137,21 @@ configuration, so a source with email verification on and no SMTP configured pro
 are fine but **new signups cannot log in** (`403 Email verification required`, `accessToken: null`). Measured.
 Configure SMTP or turn verification off before you hand the app over.
 
-*Pass:* `GET /api/health` → `{"status":"ok","version":"<v>"}`; admin login 200; `GET /api/database/tables` lists the
-source's tables; the rows read with the anon key; a migrated user logs in with the **original** password;
-`storage.objects` row count equals the objects under `local/` in the bucket; a public object downloads anonymously
-(302 to a presigned URL), a private one is 401 anonymous and 200 with a session; `system.migrations` counts match.
+*Pass:* the restore reported zero errors, **the backend booted on the source's own version** —
+`GET /api/health` returns `{"status":"ok","version":"<v>"}` and the boot log says
+`No migrations to run! Migrations complete!` — and `system.migrations` counts match. That third one is
+nearly free and worth keeping *here* specifically: InsForge owns this schema, so its own ledger
+agreeing is the schema's author confirming the restore, which no generic app can offer. Everything
+past that — do my bookings show up, can my users sign in, do my files download — is the developer's,
+as in step 4.
+
+**Two properties this path has, measured rather than re-checked per migration.** Say them; do not turn
+them into gates. (a) **Sessions survive**: on both runs `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and
+`JWT_KEY_ID` came back byte-identical on the target and a fresh login minted RS256 under the source's
+own `kid`, so nobody logs in again and no OAuth or API key is re-entered. (b) **Files arrive intact**:
+public objects download anonymously through a presigned redirect, private ones 401 anonymous and 200
+with a session, sha256 equal to source.
+
 Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged. If step 1 of the ordered cutover
 proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
 `PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
