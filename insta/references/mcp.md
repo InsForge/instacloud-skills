@@ -44,11 +44,23 @@ MCP-capable agent** — Cursor, OpenAI Codex, OpenCode, GitHub Copilot, Factory 
 `insta --agent mcp install --agent <slug>` targets one explicitly. Merges never clobber existing config
 entries.
 
-**Headless machines / CI** (no browser): `insta --agent setup agent --mcp-token` instead mints a durable
-`insta_` API token named `mcp-<hostname>` (needs `insta --agent login` first) and registers Claude Code
-with an `Authorization: Bearer` header. Manual setup for any other client works the same way:
-OAuth if the client supports MCP OAuth discovery, else a Bearer header with any `insta_` API
-token.
+**Headless machines / CI:** `--mcp-token` is a Claude Code registration option, not a login bypass.
+It requests a durable `insta_` token named `mcp-<hostname>` from the platform and stores it in an
+`Authorization: Bearer` header. It needs both a logged-in CLI session and permission to create
+tokens. Signed agent requests currently cannot create tokens (`403 unclassified_agent_action`);
+logging in again does not grant that permission. Report the denial and stop this registration
+attempt. Do not remove `--agent`, switch identity, or call the token API directly to get around it.
+
+For unattended MCP, arrange supported authentication before the agent starts: complete the
+client's OAuth flow, or have the authorized test harness configure an approved credential where
+the client supports it. The credential must not go in the agent prompt or logs. URL-only OAuth
+registration is not proof of authentication; verify the connection with an actual tool call.
+
+`--mcp-token` does not convert an existing registration or configure token headers for other
+clients. Existing entries stay unchanged. A failed token request or incomplete Claude registration
+is an error, even if skills or another client's OAuth entry were installed successfully. On older
+CLI versions (including 0.0.66), token failures can misleadingly print `needs a login` and exit 0;
+do not treat that output as success.
 
 ## Environments
 

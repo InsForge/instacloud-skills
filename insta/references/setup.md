@@ -109,12 +109,17 @@ on a volumeless service to attach one. The volume appears on the next deploy/red
 
 Up to 5 services per type. Provider credentials are minted under the service that owns them with
 canonical names (`DATABASE_URL`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `REDIS_URL`, `MYSQL_URL`,
-`MONGODB_URL`, …). They are not exported by `insta --agent secrets` and are not injected into compute until
-you bind them to a compute service with `insta --agent secrets bind`. The postgres DSN (only) is also
-directly readable — for a local psql, a migration, any tool outside compute — via `insta --agent db url`
-(prints it) or `insta --agent db connect` (opens psql); match those client tools to the server's Postgres
-major first (`pg_version` on `insta --agent services list --json`, see [operate.md](operate.md)). The other
-services' credentials have no direct read and reach code only through binding.
+`MONGODB_URL`, …). `insta --agent secrets` and `insta --agent run` export one set per type, from
+that type's **primary** service on the branch, so a local `.env` works without binding anything;
+they are **not** injected into **compute** until you bind them to a compute service with
+`insta --agent secrets bind`. A **specific** postgres DSN is also directly readable — for a local
+psql, a migration, any tool outside compute — via `insta --agent db url` (prints it) or
+`insta --agent db connect` (opens psql); match those client tools to the server's Postgres major
+first (`pg_version` on `insta --agent services list --json`, see [operate.md](operate.md)). A
+**non-primary** same-type service's credentials are not in the bundle. Only **postgres** has a
+direct read for one (`insta --agent db url --group <name>`); for storage, redis, mysql and mongodb
+there is none — bind it to a compute service, then read that service's env with
+`insta --agent secrets --service compute/<name>`.
 
 ## Ship-from-zero (the whole chain)
 

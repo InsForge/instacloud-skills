@@ -17,7 +17,7 @@ The unprotected-branch defaults are:
 | Action | Default | Guards |
 | --- | --- | --- |
 | `project.delete` | **deny** | destroying every resource |
-| `secrets.read` | allow | plaintext user-secret reads (`insta --agent secrets` / `insta --agent run`), the postgres DSN (`insta --agent db url` / `insta --agent db connect`), and names-only binding/source views; also gates `compute exec`, paired with `deploy` |
+| `secrets.read` | allow | plaintext bundle reads — user secrets **and** each type's primary service credentials (`insta --agent secrets` / `insta --agent run`) — the postgres DSN (`insta --agent db url` / `insta --agent db connect`), and names-only binding/source views; also gates `compute exec`, paired with `deploy` |
 | `secrets.write` | allow | user-secret changes and provider credential bind/unbind |
 | `deploy` | allow | code reaching compute (and the build-token mint); also gates `compute restart` (which lands configuration through the same path) and `compute exec`, the latter paired with `secrets.read` |
 | `branch.delete` | **approve** | tearing down an environment |
@@ -27,6 +27,7 @@ The unprotected-branch defaults are:
 | `storage.read` | allow | listing a bucket, downloading, previewing |
 | `storage.write` | allow | uploading an object |
 | `storage.delete`, `db.restore`, explicitly classified `db.destructive` | **approve** | deletion/restoration |
+| `domain.purchase` | **approve** | `insta domain buy` — it spends the org's money at a registrar, and a registration is non-refundable. Approval only unblocks the order: the human still has to pay the Stripe Checkout link it answers |
 | `agent_policy.update`, `branch.protection.update`, project administration | **deny** | an agent cannot loosen its own restrictions |
 
 Decisions: `allow` (proceed) · `deny` (hard no) · `approve` (human in the loop).

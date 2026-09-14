@@ -61,7 +61,10 @@ s3.put_object(Bucket=os.environ['BUCKET_NAME'], Key='avatars/u1.png', Body=data,
 
 The same credentials drive any S3 tool, which is the quickest way to seed or inspect a bucket
 (these examples assume an environment where the `AWS_*`/`BUCKET_NAME` values are already
-bound/configured — storage credentials have no CLI direct-read the way the postgres DSN does):
+bound/configured. There is no storage equivalent of `insta --agent db url`, but the branch's
+**primary** storage service's `AWS_*`/`BUCKET_NAME` do arrive in `insta --agent secrets` /
+`insta --agent run`, so a local `.env` usually has them already; a **non-primary** bucket's
+credentials have to be bound to a compute service):
 
 ```bash
 aws s3 ls "s3://$BUCKET_NAME" --recursive --endpoint-url "$AWS_ENDPOINT_URL_S3"

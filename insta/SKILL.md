@@ -72,8 +72,14 @@ types you build directly against are:
 `insta --agent services add storage <name>`, `insta --agent services add redis <name>`, etc. A project may have
 **multiple services of every type** (up to 5 per type). Provider credentials are scoped to the
 service that minted them and use canonical names inside that scope (`DATABASE_URL`, `REDIS_URL`,
-`MYSQL_URL`, `MONGODB_URL`, `AWS_ACCESS_KEY_ID`, `BUCKET_NAME`, …). They do **not** automatically
-appear in `insta --agent secrets`, `insta --agent run`, or compute env. Bind the credentials a compute service needs,
+`MYSQL_URL`, `MONGODB_URL`, `AWS_ACCESS_KEY_ID`, `BUCKET_NAME`, …). The **local-dev seam**
+(`insta --agent secrets` → `.env`, `insta --agent run`) carries one set per type, from that type's
+**primary** service on the branch — but they do **not** automatically appear in **compute env**: a
+container gets a provider credential only through an explicit binding, and a non-primary same-type
+service is not in the bundle: for **postgres** read it with `insta --agent db url --group <name>`;
+for every other type there is no direct read at all — bind it, or read the env of a compute service
+it is bound to with `insta --agent secrets --service compute/<name>`. Bind
+the credentials a compute service needs,
 then deploy — or, if the service is already running, `insta --agent compute restart` (CLI ≥ 0.0.51) to pick
 the binding up without deploying a new one. It re-runs the image *reference* already recorded, so a
 service on a moving tag (`app:latest`) still gets whatever that tag resolves to now — see
@@ -143,6 +149,10 @@ mapping + connection guide: **[mcp.md](references/mcp.md)**.
 `insta --agent setup agent -y` (installs the skill + registers MCP for Claude Code and every detected
 agent), then tell the user to **restart their coding tool** — a running session never picks up
 newly registered MCP servers or tools. One specific agent: `insta --agent mcp install --agent <slug>`.
+Registration alone does not authenticate the client; actual tool use requires a completed OAuth
+flow or an authorized credential. The `--mcp-token` option requires token-creation permission;
+an agent denied with `403 unclassified_agent_action` must stop that attempt, not retry as human.
+For unattended authentication, read [mcp.md](references/mcp.md#connecting).
 
 ## Intent-based routing
 
@@ -216,7 +226,7 @@ serves:
 ## Approval relay (CRITICAL — gated actions)
 
 Sensitive actions are gated at the credential boundary (`secrets.read`, `secrets.write`, `deploy`,
-`project.delete`, `branch.delete`, `service.add/remove/scale/upgrade`; policy per action:
+`project.delete`, `branch.delete`, `service.add/remove/scale/upgrade`, `domain.purchase`; policy per action:
 allow/deny/approve, using the project's agent policy). When a command returns
 **"approval required" with an approval id**:
 
@@ -235,14 +245,16 @@ allow/deny/approve, using the project's agent policy). When a command returns
 insta --agent status --json                          # target, login, link, current branch
 insta --agent manifest --json                        # agent-legible env view: every branch's services + URLs
 insta --agent services list --json                   # what exists on this project
-insta --agent run -- <cmd>                           # run with user-defined secrets injected (NOTHING on disk; --branch <b>)
-insta --agent secrets --print                        # user-defined secrets for the current branch (--branch <b>)
+insta --agent run -- <cmd>                           # run with the branch bundle injected (NOTHING on disk; --branch <b>)
+insta --agent run --service compute/app -- <cmd>     # one service's own env — needed when several define the same name
+insta --agent run --ignore-collisions -- <cmd>       # run anyway; every colliding name is REMOVED from the child env
+insta --agent secrets --print                        # the branch's secrets (--branch <b>, --service <compute/name>)
 insta --agent secrets sources --json                 # provider credential sources available to bind
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent secrets bindings --target compute/app --json
 insta --agent secrets set NAME value                 # user config (project-wide; --branch for overrides)
 insta --agent build . --port 8080                    # local pre-deploy build/readiness check
-insta --agent deploy . --port 8080                   # build (Dockerfile) + deploy to the current branch
+insta --agent deploy . --port 8080                   # remote build (Dockerfile, or nixpacks on insta-compute) + deploy to the current branch
 insta --agent deploy --image <ref> --port 8080       # prebuilt image instead
 insta --agent compute connect-repo owner/repo app    # or: build + deploy from GitHub on every push (cloud; GitHub App in the console first, or --public)
 insta --agent compute exec app -- printenv PORT      # one-shot command on live compute (no shell/stdin)
@@ -279,19 +291,29 @@ If a request spans two areas ("deploy and check it's healthy"), load both and an
 
 ## Two non-negotiables (wherever you are)
 
-- **Prefer `insta --agent run -- <cmd>`** for user-defined project/branch secrets — the bundle is fetched per
+- **Prefer `insta --agent run -- <cmd>`** for anything that needs the branch's secrets — the bundle is fetched per
   invocation and injected into the child environment only; nothing is written to disk, so nothing can
-  leak or be committed. Provider-minted service credentials are not in this bundle; bind them to a
-  compute service with `insta --agent secrets bind`, then deploy (or `insta --agent compute restart` an already-running
+  leak or be committed. The bundle also carries the branch's **canonical** provider credentials —
+  one set per type, from that type's primary service — so a local run reaches the database without
+  binding anything. What a **compute service** receives is separate: bind with
+  `insta --agent secrets bind`, then deploy (or `insta --agent compute restart` an already-running
   service, CLI ≥ 0.0.51 — a binding change never reaches a live machine on its own).
+  **`run` REFUSES and exits 2 when several services define the same name** (CLI ≥ 0.0.65): nothing
+  is spawned, and the names plus both ways forward print to stderr. Do not retry it as a transient
+  failure — re-run with `--service <type>/<name>` for that service's env, or
+  `--ignore-collisions` to proceed with those names removed from the child environment. Exit 2 is
+  also the approval code, so read the stderr message to tell them apart.
 - When a file is genuinely needed, treat `./.env` (from `insta --agent secrets`; auto-gitignored in git
-  repos) as the **only** file-based source for user-defined secrets — never hardcode or print secret
+  repos) as the **only** file-based source for secrets — it holds your user secrets and the
+  branch's primary provider credentials — never hardcode or print secret
   values. `DATABASE_URL`, `AWS_*` / `BUCKET_NAME`, `REDIS_*`, `MYSQL_*`, and `MONGODB_*` are service
   credentials that reach production compute only through explicit `insta --agent secrets bind` rules. For
   direct use **outside** compute the sanctioned read is `insta --agent db url` / `insta --agent db connect`
   (postgres; gated `secrets.read`) — pipe it (`psql "$(insta --agent db url)"`), never paste the DSN into
-  files or code. Everything else runs where the credentials are bound (the app itself, or a
-  one-shot `insta --agent compute exec <svc> -- <cmd>`).
+  files or code. For every type, the branch's **primary** service's credentials are already in
+  `insta --agent secrets` / `insta --agent run`. A **non-primary** service is not in the bundle:
+  postgres has the `--group <name>` read above, and **no other type has any direct read** — bind it,
+  or read that service's own env with `insta --agent secrets --service compute/<name>`.
   User-set config belongs in `insta --agent secrets set <NAME>` (project-wide) / `--branch` for branch
   overrides — never hand-edit `.env` values you want to persist.
 - Track **every** schema change as a file under `migrations/` so it replays on a branch DB and again
