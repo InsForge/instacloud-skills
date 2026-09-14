@@ -380,14 +380,15 @@ command from here to step 5 must name that new one:
 
 ```bash
 export PG=db2        # ← the FRESH service; plain `db` only if you never re-added
-# A fresh service is created AND bound here, before any restore touches it:
-insta --agent services add postgres "$PG"
-insta --agent secrets bind DATABASE_URL "postgres/$PG" --to compute/<service>
+insta --agent services add postgres "$PG"            # FRESH path only — skip when $PG is the step-1 service, it exists
+insta --agent secrets bind DATABASE_URL "postgres/$PG" --to compute/<service>   # BOTH paths — an upsert, a no-op when unchanged
 ```
 
-The `bind` is an upsert on the env name (`provisioning/userSecrets.ts` → `upsertBinding`), so it
-replaces the `postgres/db` source from step 1 with no `unbind` first; it refuses only when a *user
-secret* of the same name exists. It is rules-only until step 5's `restart`, so the stopped app is
+The `bind` is an upsert on the env name (`provisioning/userSecrets.ts` → `upsertBinding`), so on
+the fresh path it replaces the `postgres/db` source from step 1 with no `unbind` first, and on the
+plain path it re-asserts what step 1 bound; it refuses only when a *user secret* of the same name
+exists. `services add`, by contrast, is not idempotent — run it only for a service that does not
+exist yet. It is rules-only until step 5's `restart`, so the stopped app is
 not touched by it — but without it step 5 restarts the app onto the **old dirty database** while
 every check from here on reports success against `$PG`.
 
