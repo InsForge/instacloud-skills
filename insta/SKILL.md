@@ -256,7 +256,7 @@ insta --agent secrets set NAME value                 # user config (project-wide
 insta --agent build . --port 8080                    # local pre-deploy build/readiness check
 insta --agent deploy . --port 8080                   # remote build (Dockerfile, or nixpacks on insta-compute) + deploy to the current branch
 insta --agent deploy --image <ref> --port 8080       # prebuilt image instead
-insta --agent compute connect-repo owner/repo app    # or: build + deploy from GitHub on every push (cloud; authorizes your GitHub account once via a device code, or --public)
+insta --agent compute connect-repo owner/repo app    # needs App installed with repo access; device-code authorization if unlinked; or --public
 insta --agent compute exec app -- printenv PORT      # one-shot command on live compute (no shell/stdin)
 insta compute ssh app --setup                        # HUMANS ONLY: interactive shell via `ssh app.insta` (API keys refused; agents use `compute exec`)
 insta --agent compute volume app --size 1Gi          # attach/grow persistent /data; mounts on next deploy or `compute restart`
