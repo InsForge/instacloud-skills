@@ -132,10 +132,9 @@ The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an ape
 **You want to buy one** — InstaCloud registers it for you and attaches it itself:
 
 ```bash
-insta domain contact set --first-name … --phone +14155550100   # once per org — HUMAN, admin, no --agent
-insta --agent domain search myapp --tlds com,dev                # prices you pay, + renewal
-insta --agent domain buy myapp.com --no-open                     # → a Stripe Checkout URL to relay
-insta --agent domain status myapp.com                           # poll until active
+insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
+insta --agent domain buy myapp.com --no-open        # → a Stripe Checkout URL to relay
+insta --agent domain status myapp.com              # poll until active
 ```
 
 Three things to get right as an agent:
@@ -148,11 +147,8 @@ Three things to get right as an agent:
    `approval_required` (relay that line too); `read_only` refuses.
 2. **Nothing is registered before payment, and registrations are non-refundable.** A wrong name is
    real money, so read the quote back before ordering.
-3. **The registrant is the customer, not us**, and setting the org default is a **human** step: the
-   first line above has no `--agent` because that org-level write is unclassified for agents and is
-   refused `403 unclassified_agent_action` under any policy. Relay it to an admin, or pass the
-   contact the human gave you per purchase with `domain buy --contact-file c.json`.
-   `--company-name` makes that organization the legal owner instead of the person.
+3. **Nobody is asked for a registrant contact.** InstaCloud registers under its own registrar
+   account, so there is no contact to collect and no step before `search`.
 
 Afterwards the platform registers the name, publishes the DNS in the zone it controls, and attaches
 `myapp.com` **and** `www.myapp.com` to the compute service — no records for you to add. Delete that
