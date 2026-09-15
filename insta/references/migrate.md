@@ -1090,30 +1090,40 @@ never meant to run alone — and `deno.json` has no `tasks.start`, so nixpacks d
 start command, you supply one in a Dockerfile:
 
 ```bash
-git -C <insforge checkout> archive <the tag the backend runs> functions | tar -x -C deno-build --strip-components=1
-git -C <insforge checkout> show <tag>:deploy/Dockerfile.deno > deno-build/Dockerfile
-cat >> deno-build/Dockerfile <<'EOF'
-ENV DENO_DIR=/deno-dir
-RUN deno cache --no-lock /app/functions/server.ts
+SRC=<insforge checkout>; TAG=<the tag the backend runs>   # match the backend's version, not `main`
+mkdir -p deno-build && cd deno-build
+git -C "$SRC" archive "$TAG" functions | tar -x           # NO --strip-components: the Dockerfile does
+git -C "$SRC" show "$TAG":deploy/Dockerfile.deno > Dockerfile   # `COPY functions /app/functions`
+cat >> Dockerfile <<'EOF'
+# Upstream ends at `USER deno` and stops there: no CMD, because compose supplies `command:`.
+USER root
+RUN mkdir -p /data/deno-dir && chown -R deno:deno /data   # insta volumes mount at /data, fixed; a fresh
+USER deno                                                 # volume inherits this ownership, which is what
+ENV DENO_DIR=/data/deno-dir                               # lets the non-root deno user fill the cache
 EXPOSE 7133
-CMD ["deno","run","--no-lock","--unstable-worker-options","--allow-net","--allow-env",\
-     "--allow-read=./functions/worker-template.js","functions/server.ts"]
+CMD ["sh","-c","deno cache --no-lock functions/server.ts && exec deno run --no-lock \
+  --unstable-worker-options --allow-net --allow-env \
+  --allow-read=./functions/worker-template.js functions/server.ts"]
 EOF
-insta --agent build .                                   # verdict must read `deployable`, not `needs-attention`
-insta --agent services add compute deno --port 7133 --always-on
-# same POSTGRES_* as compute/api, plus JWT_SECRET **and** ENCRYPTION_KEY, POSTGREST_BASE_URL,
-# PORT=7133, DENO_ENV=production, DENO_DIR=/deno-dir, WORKER_TIMEOUT_MS=60000
-insta --agent deploy . --port 7133 --group deno
+insta --agent build .                                     # from INSIDE deno-build. Verdict must read
+                                                          # `deployable`, not `needs-attention`
+insta --agent services add compute deno --port 7133 --always-on --volume 10
+# same five POSTGRES_* as compute/api, plus JWT_SECRET **and** ENCRYPTION_KEY, POSTGREST_BASE_URL,
+# PORT=7133, DENO_ENV=production, WORKER_TIMEOUT_MS=60000. DENO_DIR comes from the image.
+insta --agent deploy . --port 7133 --group deno           # still inside deno-build
 printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
-insta --agent compute restart api                       # the backend proxies /functions/:slug to that URL
+insta --agent compute restart api                         # the backend proxies /functions/:slug to that URL
 ```
 
 Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with
 `ENCRYPTION_KEY || JWT_SECRET`, so giving it only `JWT_SECRET` when the source set both means it silently decrypts
 nothing. **`PGSSLMODE` is a no-op here** — `functions/server.ts` builds its config from the five `POSTGRES_*` and
-never reads it; TLS works because the Deno driver negotiates it. **Give it a volume for `/deno-dir`**: each cold
-worker does `await import('npm:@insforge/sdk')`, about 40 registry downloads on first invocation, and without a
-volume that repeats after every restart.
+never reads it; TLS works because the Deno driver negotiates it. **The cache needs a volume, and insta volumes mount at `/data`
+only**: each cold worker does `await import('npm:@insforge/sdk')`, about 40 registry downloads on first invocation
+(1471 ms against ~200 ms warm), and without one that repeats after every restart. That is why `DENO_DIR` moves to
+`/data/deno-dir` above and the cache warms in `CMD` rather than at build time, where the volume would discard it.
+**The measured run had no volume and left `DENO_DIR=/deno-dir`**, so the volume arrangement above follows the
+platform's fixed mount path but is not itself measured.
 
 **One thing the dump breaks, and you must fix it by hand.** `INSFORGE_BASE_URL` and `INSFORGE_INTERNAL_URL` are
 **reserved** secrets carrying the source's compose-era addresses (`http://localhost:17130`,
