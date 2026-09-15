@@ -1108,15 +1108,21 @@ insta --agent build .                                     # from INSIDE deno-bui
 insta --agent services add compute deno --port 7133 --always-on
 
 # Secrets are per-service: nothing set on compute/api reaches compute/deno. Copy the ones it shares,
-# straight across, without either value passing through your terminal:
-insta --agent secrets --print --json --service compute/api > api.env.json   # 600 by the umask above
+# straight across, without either value passing through your terminal. The umask and the trap are the
+# point: a default 0022 would leave every credential below world-readable, and the guard exits.
+umask 077
+trap 'rm -f api.env.json' EXIT INT TERM
+insta --agent secrets --print --json --service compute/api > api.env.json
 for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
-         JWT_SECRET ENCRYPTION_KEY POSTGREST_BASE_URL; do
+         JWT_SECRET POSTGREST_BASE_URL; do
   v="$(jq -r --arg k "$n" '.[$k] // empty' api.env.json)"
-  [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }   # ENCRYPTION_KEY is REQUIRED here:
-  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno   # falling back to
-done                                                       # JWT_SECRET alone decrypts nothing
-rm -f api.env.json
+  [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }
+  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno
+done
+# ENCRYPTION_KEY only if the source actually set one. Absent is a supported shape — the host falls back
+# to JWT_SECRET, the same fallback the backend uses — and setting it empty would break both.
+enc="$(jq -r '.ENCRYPTION_KEY // empty' api.env.json)"
+[ -z "$enc" ] || printf '%s' "$enc" | insta --agent secrets set ENCRYPTION_KEY --service compute/deno
 for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
   printf '%s' "${kv#*=}" | insta --agent secrets set "${kv%%=*}" --service compute/deno
 done
@@ -1158,8 +1164,10 @@ insta --agent branch switch fix-urls        # REQUIRED: create alone leaves you 
 insta --agent status                        # confirm `branch fix-urls` before touching anything
 ```
 
-The branch's compute services need a deploy before they serve, the same as step 1, so deploy the api there and
-point its `DENO_RUNTIME_URL` at the branch's own deno service before you test. Then work out the update against
+A branch's cloned compute services arrive empty and serve nothing until they are
+redeployed (`references/branching.md`), so deploy **both** of them on the branch, api and deno, and point the
+branch's api at the branch's own deno URL before you test. Deploying only the api leaves the function call with
+nowhere to go, and the isolation step fails before it can prove anything. Then work out the update against
 the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
 the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
 plaintext back. Only once that passes, repeat it on `main` with `--branch main`.
