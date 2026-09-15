@@ -898,11 +898,9 @@ not a supported source).** The source is `docker compose` with four published im
 built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
 database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
 2026-09-14** (`insforge-oss` v2.3.2, source PG 15.13.4 → insta pg 16.15): every command below ran; the hosted API
-then served the migrated rows, the migrated users with their original passwords, and the migrated files. **Not
-measured:** the Deno functions host — compose mounts `functions/` into a stock Deno image, so there is no published
-image to `deploy --image`; build one from `deploy/Dockerfile.deno` with `insta --agent deploy <dir>` if the app uses
-functions, else leave `DENO_RUNTIME_URL` at a placeholder — and PostgREST is on a **public** URL here, JWT-gated with
-`anon` as the fallback role (Supabase's posture, not InsForge's compose default).
+then served the migrated rows, the migrated users with their original passwords, and the migrated files. **Edge functions migrate too**, measured
+separately the same day: see the Deno section below. PostgREST is on a **public** URL here, JWT-gated with `anon` as
+the fallback role (Supabase's posture, not InsForge's compose default).
 
 *Why managed postgres and not InsForge's own image:* compute exposes HTTP only, so a postgres container on compute is
 unreachable by its siblings. Managed pg 16 covers what InsForge needs, measured on staging: the DSN's role is
@@ -1079,6 +1077,53 @@ with a session, sha256 equal to source.
 
 Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged.
 
+**Edge functions: a fourth compute service, and they work.** Measured on staging 2026-09-14, four functions
+including one inserted **straight into `functions.definitions` by SQL** — exactly what `pg_restore` does — which
+answered 200 with nothing restarted. The host is stateless and reads that table per request, so function code needs
+no migration of its own beyond the dump it already rides in.
+
+*Why it takes a build.* No deployment target runs a prebuilt image here: compose mounts `functions/` into the stock
+`denoland/deno:alpine-2.0.6` and supplies a `command:`, Railway builds from the repo and overrides the start
+command, Zeabur inlines `server.ts` into its template. `deploy/Dockerfile.deno` exists but **has no `CMD`** — it was
+never meant to run alone — and `deno.json` has no `tasks.start`, so nixpacks detects the runtime and stops:
+`setup: deno`, `start:` empty, `Error: No start command could be found` (measured). Until this platform can set a
+start command, you supply one in a Dockerfile:
+
+```bash
+git -C <insforge checkout> archive <the tag the backend runs> functions | tar -x -C deno-build --strip-components=1
+git -C <insforge checkout> show <tag>:deploy/Dockerfile.deno > deno-build/Dockerfile
+cat >> deno-build/Dockerfile <<'EOF'
+ENV DENO_DIR=/deno-dir
+RUN deno cache --no-lock /app/functions/server.ts
+EXPOSE 7133
+CMD ["deno","run","--no-lock","--unstable-worker-options","--allow-net","--allow-env",\
+     "--allow-read=./functions/worker-template.js","functions/server.ts"]
+EOF
+insta --agent build .                                   # verdict must read `deployable`, not `needs-attention`
+insta --agent services add compute deno --port 7133 --always-on
+# same POSTGRES_* as compute/api, plus JWT_SECRET **and** ENCRYPTION_KEY, POSTGREST_BASE_URL,
+# PORT=7133, DENO_ENV=production, DENO_DIR=/deno-dir, WORKER_TIMEOUT_MS=60000
+insta --agent deploy . --port 7133 --group deno
+printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
+insta --agent compute restart api                       # the backend proxies /functions/:slug to that URL
+```
+
+Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with
+`ENCRYPTION_KEY || JWT_SECRET`, so giving it only `JWT_SECRET` when the source set both means it silently decrypts
+nothing. **`PGSSLMODE` is a no-op here** — `functions/server.ts` builds its config from the five `POSTGRES_*` and
+never reads it; TLS works because the Deno driver negotiates it. **Give it a volume for `/deno-dir`**: each cold
+worker does `await import('npm:@insforge/sdk')`, about 40 registry downloads on first invocation, and without a
+volume that repeats after every restart.
+
+**One thing the dump breaks, and you must fix it by hand.** `INSFORGE_BASE_URL` and `INSFORGE_INTERNAL_URL` are
+**reserved** secrets carrying the source's compose-era addresses (`http://localhost:17130`,
+`http://insforge:7130`). The API refuses to update a reserved secret (`Cannot update reserved secret`), and the
+rewrite in `function.service.ts` is gated on `isCloudEnvironment()`, so it never runs here. Every function following
+InsForge's documented `baseUrl: Deno.env.get('INSFORGE_BASE_URL')` pattern dials localhost and fails. Re-encrypt
+both rows in `system.secrets` (AES-256-GCM, key `SHA256(ENCRYPTION_KEY)`, stored `iv:authTag:ciphertext` —
+`backend/src/infra/security/encryption.manager.ts`). **This step is itself unmeasured**: say so, and have the user
+confirm a function that reads `INSFORGE_BASE_URL` before you call the migration done.
+
 **Ask where the app itself runs.** A self-hosted InsForge can host apps three ways, and the answer changes what
 you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
 their own machine. `providers/compute/fly.provider.ts` runs them in the user's **own Fly account** — its comment
@@ -1109,7 +1154,9 @@ cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
 > Postgres: the cutover ordering, the guard behaviour in step 3, `start` not re-resolving env, the
 > `secrets set` stdin/argument asymmetry, and the refusal messages quoted above. **Not verified:** any
 > end-to-end migration from Render, Railway, Fly or Heroku itself, the portless-worker path, and volume data
-> movement. (The self-hosted InsForge path above was migrated end to end, files included, on 2026-09-14.)
+> movement. (The self-hosted InsForge path above was migrated end to end on 2026-09-14, files and edge functions
+> included. The one step inside it that is **not** measured is the `system.secrets` re-encrypt that repoints
+> `INSFORGE_BASE_URL`.)
 >
 > **InsForge Cloud is deliberately out of scope**, and not for lack of trying: a cloud project was migrated
 > successfully on the same day, rows, users and keys intact. It is excluded because a cloud project's data
