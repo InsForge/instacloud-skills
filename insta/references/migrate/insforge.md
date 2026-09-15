@@ -4,7 +4,7 @@ verification note says why. The source is `docker compose` with four published i
 `postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
 built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
 database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
-2026-09-14** (`insforge-oss` v2.3.2, source PG 15.13.4 → insta pg 16.15): every command below ran; the hosted API
+2026-09-14** (`insforge-oss` v2.3.2, `ghcr.io/insforge/postgres:v15.13.4` serving PG 15.18 → insta pg 16.15): every command below ran; the hosted API
 then served the migrated rows, the migrated users with their original passwords, and the migrated files. **Edge functions migrate too**, measured
 separately the same day: see the Deno section below. PostgREST is on a **public** URL here, JWT-gated with `anon` as
 the fallback role (Supabase's posture, not InsForge's compose default).
@@ -140,13 +140,19 @@ eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
 aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
 
 # 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
-docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" > dump.sql || exit 1   # $SRC_DB, not a literal
+docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" \
+  | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
+  > dump.sql || exit 1                               # $SRC_DB, not a literal
 grep -q '^-- PostgreSQL database dump complete' dump.sql \
   || { echo "dump.sql is empty or truncated — read pg_dump's stderr; \$SRC_DB was '$SRC_DB'" >&2; exit 1; }
+# **Filter even though the server is 15.** `ghcr.io/insforge/postgres:v15.13.4` ships a pg_dump **18**, so the
+# dump carries `SET transaction_timeout` (a PG17 GUC) and `\restrict`/`\unrestrict` no matter that the server is
+# 15. Measured: without the filter the restore reports `errs=1`,
+# `ERROR: unrecognized configuration parameter "transaction_timeout"`, and the gate below sends you to a fresh
+# postgres service over a no-op session setting. The awk is step 3's, unchanged.
 # Both guards are the point: pg_dump writes its errors to STDERR, so a wrong database name leaves dump.sql empty,
 # and an empty file restores with 0 errors — the stated pass condition, met against an empty database. The trailing
-# marker also catches a dump truncated by a disk filling up. pg_dump 15 against 15 needs no filtering; a host
-# pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
+# marker also catches a dump truncated by a disk filling up.
 psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
 errs="$(grep -cE '^(psql:.*)?ERROR' restore.log || true)"                    # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
 [ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
@@ -215,9 +221,10 @@ insta --agent build .                                     # from INSIDE deno-bui
 insta --agent services add compute deno --port 7133 --always-on
 
 # Secrets are per-service: nothing set on compute/api reaches compute/deno. Copy the ones it shares,
-# straight across, without either value passing through your terminal. The umask and the trap are the
-# point: a default 0022 would leave every credential below world-readable, and the guard exits.
-umask 077
+# straight across, without either value passing through your terminal. **The trap is the load-bearing half**:
+# mktemp already creates 0600 whatever the umask, but the guard below exits, and without the trap the dump of
+# every credential stays on disk.
+umask 077   # belt and braces; mktemp does not need it
 API_ENV="$(mktemp -t insta-api-env)"        # OUTSIDE deno-build: `deploy .` uploads that whole
 trap 'rm -f "$API_ENV"' EXIT INT TERM       # directory to the remote builder, and a secrets dump
 insta --agent secrets --print --json --service compute/api > "$API_ENV"   # inside it would ride along
@@ -227,8 +234,10 @@ for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD
   [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }
   printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno
 done
-# ENCRYPTION_KEY only if the source actually set one. Absent is a supported shape — the host falls back
-# to JWT_SECRET, the same fallback the backend uses — and setting it empty would break both.
+# ENCRYPTION_KEY: copy it **if and only if the source has one**. Both halves matter and they are not in
+# tension. A source that never set one is a supported shape: host and backend both fall back to JWT_SECRET,
+# together. A source that DID set one and a host that does not get it is the failure below — the two sides
+# then use different keys. Setting it empty produces that same split.
 enc="$(jq -r '.ENCRYPTION_KEY // empty' "$API_ENV")"
 [ -z "$enc" ] || printf '%s' "$enc" | insta --agent secrets set ENCRYPTION_KEY --service compute/deno
 for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
@@ -253,7 +262,7 @@ there. Fixing it needs a runtime chown before dropping privileges, which the mea
 volume off unless you are willing to test that.
 
 **One thing the dump breaks, and you must fix it by hand.** `INSFORGE_BASE_URL` and `INSFORGE_INTERNAL_URL` are
-**reserved** secrets carrying the source's compose-era addresses (`http://localhost:17130`,
+**reserved** secrets carrying the source's compose-era addresses (`http://localhost:<APP_PORT>`,
 `http://insforge:7130`). The API refuses to update a reserved secret (`Cannot update reserved secret`), and the
 rewrite in `function.service.ts` is gated on `isCloudEnvironment()`, so it never runs here. Every function following
 InsForge's documented `baseUrl: Deno.env.get('INSFORGE_BASE_URL')` pattern dials localhost and fails. The values must be re-encrypted in place in `system.secrets`, with the same scheme the backend
