@@ -1,6 +1,10 @@
 **Fly.** Read `../migrate.md` first: its ordered cutover is the procedure and this file is only what Fly
-adds to it. The easiest source of the four, and the only one that is not a Postgres downgrade: Fly
-Managed Postgres runs **16**, the same major as insta's, so step 3 needs no filter. A Fly app also
+adds to it. The easiest source of the four, and one of the two that are not a Postgres downgrade (InsForge's PG15
+is the other, an upgrade): Fly
+Managed Postgres runs **16**, the same major as insta's, so step 3 has no version blockers to work
+around. It still takes step 3's `awk` like every other source: what that strips depends on your local
+`pg_dump`, not on the majors, and a pg_dump 17 or 18 against a pg16 source emits
+`SET transaction_timeout` all the same. A Fly app also
 already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` from the local
 checkout works **on every plane** — the flyctl lane builds the Dockerfile on Fly-backed compute, the
 archive lane builds it on the build gateway for insta-compute — and needs no GitHub connection. A CLI
