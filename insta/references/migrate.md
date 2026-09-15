@@ -1111,17 +1111,18 @@ insta --agent services add compute deno --port 7133 --always-on
 # straight across, without either value passing through your terminal. The umask and the trap are the
 # point: a default 0022 would leave every credential below world-readable, and the guard exits.
 umask 077
-trap 'rm -f api.env.json' EXIT INT TERM
-insta --agent secrets --print --json --service compute/api > api.env.json
+API_ENV="$(mktemp -t insta-api-env)"        # OUTSIDE deno-build: `deploy .` uploads that whole
+trap 'rm -f "$API_ENV"' EXIT INT TERM       # directory to the remote builder, and a secrets dump
+insta --agent secrets --print --json --service compute/api > "$API_ENV"   # inside it would ride along
 for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
          JWT_SECRET POSTGREST_BASE_URL; do
-  v="$(jq -r --arg k "$n" '.[$k] // empty' api.env.json)"
+  v="$(jq -r --arg k "$n" '.[$k] // empty' "$API_ENV")"
   [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }
   printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno
 done
 # ENCRYPTION_KEY only if the source actually set one. Absent is a supported shape — the host falls back
 # to JWT_SECRET, the same fallback the backend uses — and setting it empty would break both.
-enc="$(jq -r '.ENCRYPTION_KEY // empty' api.env.json)"
+enc="$(jq -r '.ENCRYPTION_KEY // empty' "$API_ENV")"
 [ -z "$enc" ] || printf '%s' "$enc" | insta --agent secrets set ENCRYPTION_KEY --service compute/deno
 for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
   printf '%s' "${kv#*=}" | insta --agent secrets set "${kv%%=*}" --service compute/deno
