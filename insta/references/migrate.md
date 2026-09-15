@@ -462,18 +462,16 @@ why the ordering inside it matters, is in the downgrade section below.
 
 **Downgrade (source > target).** Render pg18 and Railway pg18 into InstaCloud pg16, which is the
 common case but not a universal one: Fly Managed Postgres runs 16, and a self-hosted InsForge runs 15,
-which is an upgrade. Read both majors before assuming which way you are going. **This works, at full fidelity, and it is a tested procedure**, not a
-workaround. `pg_dump` from 18 emits exactly one statement pg16 does not know.
+which is an upgrade. Read both majors before assuming which way you are going. **This works, at full
+fidelity, and it is a tested procedure**, not a workaround. `pg_dump` from 18 emits exactly one
+statement pg16 does not know.
 
-```bash
-set -o pipefail
-pg_dump --format=plain --no-owner --no-privileges "$SOURCE_URL" \
-  | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
-  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
-grep -c '^ERROR' restore.log              # must print 0
-```
+**The command is the one above** — there is no separate downgrade pipeline, because the `awk` that
+makes a downgrade work is the same `awk` a pg17-or-newer client needs in any direction. Add
+`--format=plain` explicitly if your `pg_dump` might default otherwise: **plain text is the only form
+you can filter**, and a custom-format archive has no hook for it.
 
-Why each piece is there:
+Why each piece of that `awk` is there:
 
 - `SET transaction_timeout = 0;` is a PG17 GUC. Of the 12 `SET`s a PG18 `pg_dump` emits, this is the
   **only** one pg16 rejects. In a 1,400 line realistic dump it is the single offending line.
