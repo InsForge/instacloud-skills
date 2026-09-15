@@ -410,8 +410,9 @@ regression run disproved it. **The CLIENT major decides, not the source server.*
 source into a pg16 target, dumped with a local `pg_dump` 18.3, aborts the restore with
 `ERROR: unrecognized configuration parameter "transaction_timeout"` (exit 3) in the preamble, before
 a single table is created. The same bites a self-hosted InsForge, whose PG15 image ships a pg_dump 18.
-**So put every dump through the filter above, whichever direction you are going.** It costs nothing
-when there is nothing to strip, and `pg_dump --version` is what tells you whether there is.
+**So every dump goes through the same `awk`, whichever direction you are going** — it is already in the
+restore command below, and the downgrade section explains each line of it. It costs nothing when there
+is nothing to strip, and `pg_dump --version` tells you whether there is.
 
 **Two things about `services add postgres` that will look like your mistake and are not.** It can
 answer `HTTP 504` after the provisioning has already failed and rolled the service back, so the name
@@ -449,9 +450,15 @@ Set `PG` once, at the top, and use it for every command from here to step 5.
 ```bash
 set -o pipefail
 pg_dump --no-owner --no-privileges "$SOURCE_URL" \
+  | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
   | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
 grep -c '^ERROR' restore.log              # must print 0
 ```
+
+**That `awk` is in the command in both directions**, upgrade and downgrade alike, which is why it is
+here rather than only in the downgrade block: what it strips depends on the **client** major, not on
+which way the majors run. It is a no-op when there is nothing to strip. What each line is for, and
+why the ordering inside it matters, is in the downgrade section below.
 
 **Downgrade (source > target).** Render pg18 and Railway pg18 into InstaCloud pg16, which is the
 common case but not a universal one: Fly Managed Postgres runs 16, and a self-hosted InsForge runs 15,
