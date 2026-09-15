@@ -1096,18 +1096,16 @@ git -C "$SRC" archive "$TAG" functions | tar -x           # NO --strip-component
 git -C "$SRC" show "$TAG":deploy/Dockerfile.deno > Dockerfile   # `COPY functions /app/functions`
 cat >> Dockerfile <<'EOF'
 # Upstream ends at `USER deno` and stops there: no CMD, because compose supplies `command:`.
-USER root
-RUN mkdir -p /data/deno-dir && chown -R deno:deno /data   # insta volumes mount at /data, fixed; a fresh
-USER deno                                                 # volume inherits this ownership, which is what
-ENV DENO_DIR=/data/deno-dir                               # lets the non-root deno user fill the cache
+# These four lines are the whole of what this platform is missing, written into the image.
+ENV DENO_DIR=/deno-dir
+RUN deno cache --no-lock /app/functions/server.ts
 EXPOSE 7133
-CMD ["sh","-c","deno cache --no-lock functions/server.ts && exec deno run --no-lock \
-  --unstable-worker-options --allow-net --allow-env \
-  --allow-read=./functions/worker-template.js functions/server.ts"]
+CMD ["deno","run","--no-lock","--unstable-worker-options","--allow-net","--allow-env",\
+     "--allow-read=./functions/worker-template.js","functions/server.ts"]
 EOF
 insta --agent build .                                     # from INSIDE deno-build. Verdict must read
                                                           # `deployable`, not `needs-attention`
-insta --agent services add compute deno --port 7133 --always-on --volume 10
+insta --agent services add compute deno --port 7133 --always-on
 # same five POSTGRES_* as compute/api, plus JWT_SECRET **and** ENCRYPTION_KEY, POSTGREST_BASE_URL,
 # PORT=7133, DENO_ENV=production, WORKER_TIMEOUT_MS=60000. DENO_DIR comes from the image.
 insta --agent deploy . --port 7133 --group deno           # still inside deno-build
@@ -1118,21 +1116,30 @@ insta --agent compute restart api                         # the backend proxies 
 Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with
 `ENCRYPTION_KEY || JWT_SECRET`, so giving it only `JWT_SECRET` when the source set both means it silently decrypts
 nothing. **`PGSSLMODE` is a no-op here** — `functions/server.ts` builds its config from the five `POSTGRES_*` and
-never reads it; TLS works because the Deno driver negotiates it. **The cache needs a volume, and insta volumes mount at `/data`
-only**: each cold worker does `await import('npm:@insforge/sdk')`, about 40 registry downloads on first invocation
-(1471 ms against ~200 ms warm), and without one that repeats after every restart. That is why `DENO_DIR` moves to
-`/data/deno-dir` above and the cache warms in `CMD` rather than at build time, where the volume would discard it.
-**The measured run had no volume and left `DENO_DIR=/deno-dir`**, so the volume arrangement above follows the
-platform's fixed mount path but is not itself measured.
+never reads it; TLS works because the Deno driver negotiates it. **Cold starts cost about a second, and there is no
+tested fix**: each cold worker does `await import('npm:@insforge/sdk')`, roughly 40 registry downloads on first
+invocation (1471 ms against ~200 ms warm), repeated after every restart. The obvious answer, a volume for the
+module cache, does **not** work as written: insta volumes mount at `/data` and arrive empty (this file's own disk
+row says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
+preparation hidden by the mount, and the container — which runs as the non-root `deno` user — then cannot write
+there. Fixing it needs a runtime chown before dropping privileges, which the measured run did not do. Leave the
+volume off unless you are willing to test that.
 
 **One thing the dump breaks, and you must fix it by hand.** `INSFORGE_BASE_URL` and `INSFORGE_INTERNAL_URL` are
 **reserved** secrets carrying the source's compose-era addresses (`http://localhost:17130`,
 `http://insforge:7130`). The API refuses to update a reserved secret (`Cannot update reserved secret`), and the
 rewrite in `function.service.ts` is gated on `isCloudEnvironment()`, so it never runs here. Every function following
-InsForge's documented `baseUrl: Deno.env.get('INSFORGE_BASE_URL')` pattern dials localhost and fails. Re-encrypt
-both rows in `system.secrets` (AES-256-GCM, key `SHA256(ENCRYPTION_KEY)`, stored `iv:authTag:ciphertext` —
-`backend/src/infra/security/encryption.manager.ts`). **This step is itself unmeasured**: say so, and have the user
-confirm a function that reads `INSFORGE_BASE_URL` before you call the migration done.
+InsForge's documented `baseUrl: Deno.env.get('INSFORGE_BASE_URL')` pattern dials localhost and fails. The values must be re-encrypted in place in `system.secrets`, with the same scheme the backend
+reads: AES-256-GCM, key `SHA256(ENCRYPTION_KEY)`, stored as `iv:authTag:ciphertext`
+(`backend/src/infra/security/encryption.manager.ts`).
+
+**There is no vetted command for this here, on purpose.** It is a direct ciphertext write to the secret store of a
+database you have just migrated, and nothing in this runbook has been executed against it. Do not improvise one
+against production. Do this instead, in order: branch the project (`insta --agent branch create fix-urls`), work
+out the update there against the branch's own database, confirm a function that reads `INSFORGE_BASE_URL` returns
+the new host, and only then repeat it on `main`. Read `ENCRYPTION_KEY` from the service's own secrets rather than
+retyping it, write only the two named rows, and verify by calling a function rather than by selecting the
+plaintext back.
 
 **Ask where the app itself runs.** A self-hosted InsForge can host apps three ways, and the answer changes what
 you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
