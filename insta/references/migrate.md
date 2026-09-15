@@ -405,7 +405,20 @@ not better, because `pg_restore` 16 rejects an 18 archive at the header
 major, and use plain format when the target is older, because plain text is the only form you can
 filter.
 
-**Upgrade or equal (source <= target).** Nothing special.
+**Upgrade or equal (source <= target).** Not "nothing special", which is what this said until a
+regression run disproved it. **The CLIENT major decides, not the source server.** Measured: a pg16
+source into a pg16 target, dumped with a local `pg_dump` 18.3, aborts the restore with
+`ERROR: unrecognized configuration parameter "transaction_timeout"` (exit 3) in the preamble, before
+a single table is created. The same bites a self-hosted InsForge, whose PG15 image ships a pg_dump 18.
+**So put every dump through the filter above, whichever direction you are going.** It costs nothing
+when there is nothing to strip, and `pg_dump --version` is what tells you whether there is.
+
+**Two things about `services add postgres` that will look like your mistake and are not.** It can
+answer `HTTP 504` after the provisioning has already failed and rolled the service back, so the name
+is simply absent from `services list` — re-run it, it is not a duplicate. And `secrets bind` against
+a postgres still showing `[creating]` fails with
+`credential not found: postgres/<name>.DATABASE_URL (HTTP 404)`: the credential is minted when the
+service goes `[active]`, so wait for that rather than assuming the bind syntax is wrong.
 
 **Set `PG` first, and set it to the service you are actually restoring into.** If step 3 had you
 add a **fresh** postgres service because the proving deploy dirtied the first one, then every
