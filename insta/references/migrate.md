@@ -44,10 +44,21 @@ the source's workers and cron (and the target's proving deploy) before cutting t
 literally the ordering below cannot be completed without a database; that is a gap in the writing,
 not a claim the app is unsupported.
 
-**Read the source file for your platform alongside this one.** This file is the cutover and it is the same for
-every source; `migrate/render.md`, `migrate/railway.md`, `migrate/fly.md` and `migrate/insforge.md` each carry
-what that platform adds. The table under "Per-source deltas" at the end says which is which. Read both, never one
-instead of the other.
+## Where the source-specific part lives
+
+The cutover below is the same whatever you are migrating from. What differs is only how you get things **out of
+the source**, and what that platform's apps assume about themselves. That part has a file each:
+
+| Source | File | What it covers |
+|---|---|---|
+| **Render** | `migrate/render.md` | `render.yaml` and the env-vars API, the `ALLOWED_HOSTS` 400, the blueprint field mapping |
+| **Railway** | `migrate/railway.md` | the project token, translating a project by hand, the volume caveat |
+| **Fly** | `migrate/fly.md` | `fly.toml` as the source of `--port`, and secrets that can only be read off a running machine |
+| **InsForge** (self-hosted) | `migrate/insforge.md` | standing the backend itself up: init SQL, the five provider credentials, the Deno host |
+
+**Read your source's file in addition to this one, never instead of it.** Everything those files say about steps,
+`$PG`, the writer barrier or the rollback boundary refers back to the cutover here. Heroku is the exception: its
+five lines are at the end of this file rather than in one of their own.
 
 ## The ordered cutover
 
@@ -676,20 +687,7 @@ data loss. "If verification fails, just point back at the source" is wrong once 
 
 Bind every credential the app needs; nothing is auto-injected into compute.
 
-## Per-source deltas
-
-The cutover above is the same for every source. What differs is only how you get things OUT of the
-source, and what that platform's apps assume about themselves. One file each:
-
-| Source | File | What it covers |
-|---|---|---|
-| **Render** | `migrate/render.md` | `render.yaml` and the env-vars API, the `ALLOWED_HOSTS` 400, the blueprint field mapping |
-| **Railway** | `migrate/railway.md` | the project token, translating a project by hand, the volume caveat |
-| **Fly** | `migrate/fly.md` | `fly.toml` as the source of `--port`, and secrets that can only be read off a running machine |
-| **InsForge** (self-hosted) | `migrate/insforge.md` | standing the backend itself up: init SQL, the five provider credentials, the Deno host |
-
-Read the one you need **in addition to** this file, never instead of it. Everything those files say
-about steps, `$PG`, the writer barrier or the rollback boundary refers back to the cutover here.
+## Heroku
 
 **Heroku.** The richest export surface: `config -s` yields `KEY=value` lines, `pg:backups` and
 `maintenance:on` are single commands, and the `Procfile`'s `web:` / `worker:` map straight onto
