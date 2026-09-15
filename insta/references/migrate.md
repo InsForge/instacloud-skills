@@ -1,9 +1,9 @@
 # Migrate an app in from another platform
 
 Move a running app (Heroku, Railway, Fly, Render) onto InstaCloud: provision, move env and data,
-cut over. The reader-facing walkthroughs are `docs.instacloud.com/migrate/render` and
-`/migrate/railway`, and they are deliberately thin: they hand the user a prompt and point at this
-runbook, so **this file is what actually gets followed.** Those pages deliberately do NOT list these
+cut over. The reader-facing walkthroughs are `docs.instacloud.com/migrate/`, one page each for render,
+railway, fly and insforge, and they are deliberately thin: they hand the user a prompt and point at
+this runbook, so **this file is what actually gets followed.** Those pages deliberately do NOT list these
 steps, so do not add detail there when it belongs here. The one thing they do promise the reader is
 that the source stops taking writes before the target starts, which is the rollback boundary below.
 Everything else lives here: the ordering and the pass conditions that keep a cutover from silently
@@ -113,7 +113,21 @@ step and a mystery 400 after the cutover. Open the app's settings and answer two
   link builder.
 - **Where does it read the host from?** A variable you can set (Render's
   `RENDER_EXTERNAL_HOSTNAME`), or a literal you must edit (Fly's `.fly.dev`, Heroku's fallback
-  list)? See the per-source table in `migrate/render.md` for what each platform's apps actually do.
+  list)?
+
+**Every source hits this, but the shape differs, and Render is the mildest case.** Read from each
+platform's own official Django example, which is what real user code is derived from:
+
+| source | what its example does | what you get here |
+|---|---|---|
+| **Render** | `ALLOWED_HOSTS` appended from `RENDER_EXTERNAL_HOSTNAME` | 400, and **one env var fixes it** (the ladder in `migrate/render.md`) |
+| **Heroku** | `IS_HEROKU_APP = "DYNO" in os.environ`; then `["*"]` if set, else `[".localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"]` | 400, and **no env var can fix it** — both branches are literals, so the code must change. `DEBUG` keys off `ENVIRONMENT`, not the platform, so at least it stays off |
+| **Fly** | hardcoded `['localhost', '127.0.0.1', '.fly.dev']` (their guide names no Fly variable) | 400, **code must change**. Do not go looking for `FLY_APP_NAME` in the settings; it is usually not there |
+| **Railway** | `ALLOWED_HOSTS = ["*"]`, unconditional | **works as-is** — they bought that by giving up the check entirely |
+
+So the useful expectation is not "grep for the platform variable" but **"assume the app cannot name
+its own new hostname, and find out how it learns one."** Sometimes that is a variable you can set,
+often it is a literal you have to edit, and occasionally (Railway) there is nothing to do.
 
 **`insta --agent build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
 offline, no login. It prints the builder, the detected install/build/start commands, the port and
@@ -127,7 +141,10 @@ one`, start-command check `skipped`) on a repo the server lane builds fine. Inst
 on insta-compute the host is minted by the plane at first deploy, so it does not exist until after
 the deploy below (`adapters/insta-compute.ts`: routeKey is "learned at first deploy", and
 `access_host` "is the only source of truth"). **That is why this is two steps: decide here, apply in
-step 5.** If the answer was "a literal I must edit", make that edit NOW, before the deploy, so the
+step 5.** If the answer was "a literal I must edit", make that edit NOW, before the deploy — but you cannot put
+the real host in it, because the host does not exist until that deploy succeeds. Replace the literal with a
+neutral variable of your own (`APP_HOSTNAME`, `DJANGO_ALLOWED_HOSTS`), deploy, then set it in step 5 and
+restart. Editing the code now is what makes step 5 a one-variable fix instead of a rebuild, so the
 image is already right.
 
 ```bash
@@ -423,8 +440,9 @@ pg_dump --no-owner --no-privileges "$SOURCE_URL" \
 grep -c '^ERROR' restore.log              # must print 0
 ```
 
-**Downgrade (source > target).** Today this is every documented source: Render pg18 and Railway
-pg18 into InstaCloud pg16. **This works, at full fidelity, and it is a tested procedure**, not a
+**Downgrade (source > target).** Render pg18 and Railway pg18 into InstaCloud pg16, which is the
+common case but not a universal one: Fly Managed Postgres runs 16, and a self-hosted InsForge runs 15,
+which is an upgrade. Read both majors before assuming which way you are going. **This works, at full fidelity, and it is a tested procedure**, not a
 workaround. `pg_dump` from 18 emits exactly one statement pg16 does not know.
 
 ```bash
@@ -530,7 +548,7 @@ DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
 status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both. The `^ERROR`
 pattern above is correct **for these two restores because they are piped** — psql reading stdin emits
-a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as the InsForge section does)
+a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as `migrate/insforge.md` does)
 prefixes every one with `psql:<file>:<line>:`, so match both spellings when you are not sure which
 form you ran: `grep -cE '^(psql:.*)?ERROR'`.
 *Pass:* `grep -c '^ERROR'` is 0. Exit 0 alone does not prove it — the guards above are what make that

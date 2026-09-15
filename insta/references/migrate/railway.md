@@ -1,6 +1,5 @@
-**Railway.** Read `../migrate.md` first: the ordered cutover there is the procedure, and this file is only what Railway adds to it.
-
-**Railway.** Closest model (services + variables + IaC), so the concept mapping is nearly 1:1 — but
+**Railway.** Read `../migrate.md` first: its ordered cutover is the procedure and this file is only what
+Railway adds to it. Closest model (services + variables + IaC), so the concept mapping is nearly 1:1 — but
 the export has three traps, all measured:
 
 - **`railway variable list` always RESOLVES references**, in both the table and `--json`, and no flag
@@ -38,7 +37,7 @@ file, so "cd somewhere safe" is not isolation.
 | an app reading `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPORT` | a code change to read `DATABASE_URL`, per step 1 of the cutover in `../migrate.md`. Railway injects these by default, so expect it |
 | `RAILWAY_*` built-ins, `PORT` | skip: render-time only, and the platform supplies `PORT` here |
 | any other variable | `insta --agent secrets set KEY` |
-| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the Render `disk:` row), and download the source contents while its service still runs |
+| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the `disk:` row in `migrate/render.md`), and download the source contents while its service still runs |
 | `numReplicas` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
 | a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
 | multi-region replicas | not available; one region per service, chosen with `--region` at add time |
