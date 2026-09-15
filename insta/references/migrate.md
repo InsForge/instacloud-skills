@@ -1106,8 +1106,21 @@ EOF
 insta --agent build .                                     # from INSIDE deno-build. Verdict must read
                                                           # `deployable`, not `needs-attention`
 insta --agent services add compute deno --port 7133 --always-on
-# same five POSTGRES_* as compute/api, plus JWT_SECRET **and** ENCRYPTION_KEY, POSTGREST_BASE_URL,
-# PORT=7133, DENO_ENV=production, WORKER_TIMEOUT_MS=60000. DENO_DIR comes from the image.
+
+# Secrets are per-service: nothing set on compute/api reaches compute/deno. Copy the ones it shares,
+# straight across, without either value passing through your terminal:
+insta --agent secrets --print --json --service compute/api > api.env.json   # 600 by the umask above
+for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
+         JWT_SECRET ENCRYPTION_KEY POSTGREST_BASE_URL; do
+  v="$(jq -r --arg k "$n" '.[$k] // empty' api.env.json)"
+  [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }   # ENCRYPTION_KEY is REQUIRED here:
+  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno   # falling back to
+done                                                       # JWT_SECRET alone decrypts nothing
+rm -f api.env.json
+for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
+  printf '%s' "${kv#*=}" | insta --agent secrets set "${kv%%=*}" --service compute/deno
+done
+
 insta --agent deploy . --port 7133 --group deno           # still inside deno-build
 printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
 insta --agent compute restart api                         # the backend proxies /functions/:slug to that URL
