@@ -861,7 +861,7 @@ file, so "cd somewhere safe" is not isolation.
 | a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the Render `disk:` row), and download the source contents while its service still runs |
 | `numReplicas` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
 | a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
-| multi-region replicas | not available. One region per service, chosen with `--region` at add time, or one region per template deployment with `template deploy --region` |
+| multi-region replicas | not available. One region per service, chosen with `--region` at add time, or one region per template deployment with `insta --agent template deploy --region` |
 
 Railway's Postgres template is **18**, so step 3 is a downgrade. Its volumes carry the same caveat
 as any: creating a target volume does not copy contents.
