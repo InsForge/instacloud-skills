@@ -7,12 +7,10 @@ has the four first-deploy traps already solved, so `insta --agent deploy .` work
 
 Every recipe below encodes these. If you hand-write a Dockerfile, get all four right:
 
-1. **Bind `::` (dual-stack), never `0.0.0.0`-only or `127.0.0.1`.** InstaCloud's router and private
-   network are **IPv6**. An app listening only on IPv4 boots "successfully" and then every request
-   404s/502s forever. Node's `server.listen(port, '::')`. Next's standalone server does
-   `server.listen(port, process.env.HOSTNAME || '0.0.0.0')`, and `0.0.0.0` binds **IPv4-only** —
-   so set **`HOSTNAME=::`** (verified: binds dual-stack). `0.0.0.0` happens to work on Fly's
-   IPv4-reachable proxy but fails on IPv6-only networks like Railway — `::` is safe on both.
+1. **Bind `0.0.0.0`, never loopback (`127.0.0.1` or `::1`).** This accepts IPv4 connections from
+   the router and readiness checks. `::` also works when the app and OS accept IPv4-mapped
+   connections; a successful IPv6 bind alone does not establish dual-stack support. Do not enable
+   IPv6-only mode. Set Next's standalone `HOSTNAME=0.0.0.0` explicitly.
 2. **`EXPOSE <port>` in the Dockerfile.** `insta --agent deploy` derives `--port` from the last `EXPOSE`;
    without it the service wires to 8080 and refuses every request. Keep `EXPOSE` == the listen port.
 3. **`PORT` env == the exposed port.** Read `process.env.PORT` and default it to the same number you
@@ -45,7 +43,7 @@ COPY . .
 RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 HOSTNAME=::
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
@@ -60,8 +58,7 @@ the database's scale-to-zero suspend window so an idle-suspended DB doesn't leav
 ## Node/Express (API or full-stack, backend serves the built SPA)
 
 ```js
-// bind '::' — dual-stack; PORT matches EXPOSE
-app.listen(process.env.PORT || 3000, '::', () => console.log('up'))
+app.listen(process.env.PORT || 3000, '0.0.0.0', () => console.log('up'))
 ```
 
 ```dockerfile
@@ -77,8 +74,8 @@ CMD ["npm", "start"]
 
 ## Vite / static SPA (served by a tiny Node static server)
 
-Build to `dist/`, serve it with a dual-stack static server so client routes fall back to
-`index.html`. Simplest is a 15-line Express static server (bind `::`, `EXPOSE 3000`) using the
+Build to `dist/`, serve it with a static server so client routes fall back to
+`index.html`. Simplest is a 15-line Express static server (bind `0.0.0.0`, `EXPOSE 3000`) using the
 Node recipe above with `app.use(express.static('dist'))` + a `* → dist/index.html` fallback.
 Deploy it as its own compute service; point it at the API via a build-time env var.
 
@@ -92,12 +89,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PORT=8000
 EXPOSE 8000
-# --host :: binds dual-stack (IPv6 + mapped IPv4)
-CMD ["sh","-c","uvicorn main:app --host :: --port ${PORT}"]
+CMD ["sh","-c","uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
 ```
 
 ## After any deploy — verify (non-negotiable)
 
 `curl` the printed URL's health path until it's 200 (cold start takes a few seconds). A 404/502
-that never clears almost always means trap #1 (bound IPv4-only) or #3 (PORT≠EXPOSE) — check
+that never clears can mean trap #1 (loopback or IPv6-only binding) or #3 (PORT≠EXPOSE) — check
 `insta --agent logs compute`, which prints the platform's "instance refused connection" hint.
