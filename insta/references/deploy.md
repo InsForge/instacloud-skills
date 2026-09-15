@@ -159,7 +159,7 @@ service and the domain goes `detached`: the registration stands, and
 
 **Before hand-writing a Dockerfile, copy the recipe for your framework: [frameworks.md](frameworks.md).**
 Next.js, Node/Express, Vite/SPA, and FastAPI each have a paste-and-deploy recipe with the four
-first-deploy traps already solved (bind `::` not IPv4-only; `EXPOSE` == listen port so `--port`
+first-deploy traps already solved (bind `0.0.0.0`; `EXPOSE` == listen port so `--port`
 auto-derives; `PORT` env matches; multi-stage build). Skipping this is why a first deploy boots
 "fine" yet refuses every request. Full-stack = one container/one port (backend serves the built
 frontend); separate SPA = its own tiny static-server compute service.
