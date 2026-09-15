@@ -1,9 +1,9 @@
 # Migrate an app in from another platform
 
 Move a running app (Heroku, Railway, Fly, Render) onto InstaCloud: provision, move env and data,
-cut over. The reader-facing walkthroughs are `docs.instacloud.com/migrate/render` and
-`/migrate/railway`, and they are deliberately thin: they hand the user a prompt and point at this
-runbook, so **this file is what actually gets followed.** Those pages deliberately do NOT list these
+cut over. The reader-facing walkthroughs are `docs.instacloud.com/migrate/`, one page each for render,
+railway, fly and insforge, and they are deliberately thin: they hand the user a prompt and point at
+this runbook, so **this file is what actually gets followed.** Those pages deliberately do NOT list these
 steps, so do not add detail there when it belongs here. The one thing they do promise the reader is
 that the source stops taking writes before the target starts, which is the rollback boundary below.
 Everything else lives here: the ordering and the pass conditions that keep a cutover from silently
@@ -43,6 +43,22 @@ step 1. Step 2 stays: it is the writer barrier, not a Postgres check, and "no da
 the source's workers and cron (and the target's proving deploy) before cutting traffic. Read
 literally the ordering below cannot be completed without a database; that is a gap in the writing,
 not a claim the app is unsupported.
+
+## Where the source-specific part lives
+
+The cutover below is the same whatever you are migrating from. What differs is only how you get things **out of
+the source**, and what that platform's apps assume about themselves. That part has a file each:
+
+| Source | File | What it covers |
+|---|---|---|
+| **Render** | `migrate/render.md` | `render.yaml` and the env-vars API, the `ALLOWED_HOSTS` 400, the blueprint field mapping |
+| **Railway** | `migrate/railway.md` | the project token, translating a project by hand, the volume caveat |
+| **Fly** | `migrate/fly.md` | `fly.toml` as the source of `--port`, and secrets that can only be read off a running machine |
+| **InsForge** (self-hosted) | `migrate/insforge.md` | standing the backend itself up: init SQL, the five provider credentials, the Deno host |
+
+**Read your source's file in addition to this one, never instead of it.** Everything those files say about steps,
+`$PG`, the writer barrier or the rollback boundary refers back to the cutover here. Heroku is the exception: its
+five lines are at the end of this file rather than in one of their own.
 
 ## The ordered cutover
 
@@ -97,7 +113,21 @@ step and a mystery 400 after the cutover. Open the app's settings and answer two
   link builder.
 - **Where does it read the host from?** A variable you can set (Render's
   `RENDER_EXTERNAL_HOSTNAME`), or a literal you must edit (Fly's `.fly.dev`, Heroku's fallback
-  list)? See the per-source table in the Render section for what each platform's apps actually do.
+  list)?
+
+**Every source hits this, but the shape differs, and Render is the mildest case.** Read from each
+platform's own official Django example, which is what real user code is derived from:
+
+| source | what its example does | what you get here |
+|---|---|---|
+| **Render** | `ALLOWED_HOSTS` appended from `RENDER_EXTERNAL_HOSTNAME` | 400, and **one env var fixes it** (the ladder in `migrate/render.md`) |
+| **Heroku** | `IS_HEROKU_APP = "DYNO" in os.environ`; then `["*"]` if set, else `[".localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"]` | 400, and **no env var can fix it** — both branches are literals, so the code must change. `DEBUG` keys off `ENVIRONMENT`, not the platform, so at least it stays off |
+| **Fly** | hardcoded `['localhost', '127.0.0.1', '.fly.dev']` (their guide names no Fly variable) | 400, **code must change**. Do not go looking for `FLY_APP_NAME` in the settings; it is usually not there |
+| **Railway** | `ALLOWED_HOSTS = ["*"]`, unconditional | **works as-is** — they bought that by giving up the check entirely |
+
+So the useful expectation is not "grep for the platform variable" but **"assume the app cannot name
+its own new hostname, and find out how it learns one."** Sometimes that is a variable you can set,
+often it is a literal you have to edit, and occasionally (Railway) there is nothing to do.
 
 **`insta --agent build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
 offline, no login. It prints the builder, the detected install/build/start commands, the port and
@@ -111,7 +141,10 @@ one`, start-command check `skipped`) on a repo the server lane builds fine. Inst
 on insta-compute the host is minted by the plane at first deploy, so it does not exist until after
 the deploy below (`adapters/insta-compute.ts`: routeKey is "learned at first deploy", and
 `access_host` "is the only source of truth"). **That is why this is two steps: decide here, apply in
-step 5.** If the answer was "a literal I must edit", make that edit NOW, before the deploy, so the
+step 5.** If the answer was "a literal I must edit", make that edit NOW, before the deploy — but you cannot put
+the real host in it, because the host does not exist until that deploy succeeds. Replace the literal with a
+neutral variable of your own (`APP_HOSTNAME`, `DJANGO_ALLOWED_HOSTS`), deploy, then set it in step 5 and
+restart. Editing the code now is what makes step 5 a one-variable fix instead of a rebuild, so the
 image is already right.
 
 ```bash
@@ -372,7 +405,21 @@ not better, because `pg_restore` 16 rejects an 18 archive at the header
 major, and use plain format when the target is older, because plain text is the only form you can
 filter.
 
-**Upgrade or equal (source <= target).** Nothing special.
+**Upgrade or equal (source <= target).** Not "nothing special", which is what this said until a
+regression run disproved it. **The CLIENT major decides, not the source server.** Measured: a pg16
+source into a pg16 target, dumped with a local `pg_dump` 18.3, aborts the restore with
+`ERROR: unrecognized configuration parameter "transaction_timeout"` (exit 3) in the preamble, before
+a single table is created. The same bites a self-hosted InsForge, whose PG15 image ships a pg_dump 18.
+**So every dump goes through the same `awk`, whichever direction you are going** — it is already in the
+restore command below, and the downgrade section explains each line of it. It costs nothing when there
+is nothing to strip, and `pg_dump --version` tells you whether there is.
+
+**Two things about `services add postgres` that will look like your mistake and are not.** It can
+answer `HTTP 504` after the provisioning has already failed and rolled the service back, so the name
+is simply absent from `services list` — re-run it, it is not a duplicate. And `secrets bind` against
+a postgres still showing `[creating]` fails with
+`credential not found: postgres/<name>.DATABASE_URL (HTTP 404)`: the credential is minted when the
+service goes `[active]`, so wait for that rather than assuming the bind syntax is wrong.
 
 **Set `PG` first, and set it to the service you are actually restoring into.** If step 3 had you
 add a **fresh** postgres service because the proving deploy dirtied the first one, then every
@@ -403,23 +450,28 @@ Set `PG` once, at the top, and use it for every command from here to step 5.
 ```bash
 set -o pipefail
 pg_dump --no-owner --no-privileges "$SOURCE_URL" \
-  | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
-grep -c '^ERROR' restore.log              # must print 0
-```
-
-**Downgrade (source > target).** Today this is every documented source: Render pg18 and Railway
-pg18 into InstaCloud pg16. **This works, at full fidelity, and it is a tested procedure**, not a
-workaround. `pg_dump` from 18 emits exactly one statement pg16 does not know.
-
-```bash
-set -o pipefail
-pg_dump --format=plain --no-owner --no-privileges "$SOURCE_URL" \
   | awk '!d && /^SET transaction_timeout/ {d=1; next} /^\\restrict / {next} /^\\unrestrict / {next} {print}' \
   | psql -v ON_ERROR_STOP=1 "$(insta --agent db url --group "$PG")" 2>&1 | tee restore.log
 grep -c '^ERROR' restore.log              # must print 0
 ```
 
-Why each piece is there:
+**That `awk` is in the command in both directions**, upgrade and downgrade alike, which is why it is
+here rather than only in the downgrade block: what it strips depends on the **client** major, not on
+which way the majors run. It is a no-op when there is nothing to strip. What each line is for, and
+why the ordering inside it matters, is in the downgrade section below.
+
+**Downgrade (source > target).** Render pg18 and Railway pg18 into InstaCloud pg16, which is the
+common case but not a universal one: Fly Managed Postgres runs 16, and a self-hosted InsForge runs 15,
+which is an upgrade. Read both majors before assuming which way you are going. **This works, at full
+fidelity, and it is a tested procedure**, not a workaround. `pg_dump` from 18 emits exactly one
+statement pg16 does not know.
+
+**The command is the one above** — there is no separate downgrade pipeline, because the `awk` that
+makes a downgrade work is the same `awk` a pg17-or-newer client needs in any direction. Add
+`--format=plain` explicitly if your `pg_dump` might default otherwise: **plain text is the only form
+you can filter**, and a custom-format archive has no hook for it.
+
+Why each piece of that `awk` is there:
 
 - `SET transaction_timeout = 0;` is a PG17 GUC. Of the 12 `SET`s a PG18 `pg_dump` emits, this is the
   **only** one pg16 rejects. In a 1,400 line realistic dump it is the single offending line.
@@ -514,7 +566,7 @@ DSN changes: bind it in step 3 (the `$PG` block) and re-resolve it in step 5.
 Which guard catches what: **`ON_ERROR_STOP=1` catches SQL errors** (psql is the last stage, so its
 status is the pipeline's), **`pipefail` catches a `pg_dump` failure**. You need both. The `^ERROR`
 pattern above is correct **for these two restores because they are piped** — psql reading stdin emits
-a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as the InsForge section does)
+a bare `ERROR:`. Restoring from a file instead (`psql -f dump.sql`, as `migrate/insforge.md` does)
 prefixes every one with `psql:<file>:<line>:`, so match both spellings when you are not sure which
 form you ran: `grep -cE '^(psql:.*)?ERROR'`.
 *Pass:* `grep -c '^ERROR'` is 0. Exit 0 alone does not prove it — the guards above are what make that
@@ -593,7 +645,7 @@ feeds it to `server.url`, which needs `https://…`. Setting the wrong one of th
 the app reads nothing and keeps its default.
 
 Set only what the app needs. Faking a *second* variable to make it believe it is still on the old
-platform is how the Render case turns a 400 into a 500 (the ladder in the Render section). Treat
+platform is how the Render case turns a 400 into a 500 (the ladder in `migrate/render.md`). Treat
 this as an expedient that gets the cutover serving, and open a follow-up to give the app a neutral
 way to read its host, since the value you just set is named after a platform it has left.
 
@@ -671,533 +723,12 @@ data loss. "If verification fails, just point back at the source" is wrong once 
 
 Bind every credential the app needs; nothing is auto-injected into compute.
 
-## Per-source deltas
-
-**Render.** Buildpack-built, so almost never a Dockerfile — `insta --agent compute connect-repo` is the
-shortest path. **Its Postgres is 18, so step 3 is a downgrade** into insta's pg16. Step 3 has the tested
-procedure for that; it is one filtered line, not a blocker.
-
-**Translate `render.yaml` yourself — there is no importer, and you do not need one.** If the repo
-has one, read it and provision from this table rather than interviewing the user. Every row is a
-command you already have:
-
-| In `render.yaml` | Do this |
-|---|---|
-| `databases: [{name: X}]` | `insta --agent services add postgres X` |
-| `databases[].diskSizeGB` | nothing to do: database disk sizing is not addressable here |
-| `services: [{type: web, name: X}]` | `insta --agent services add compute X --port <n>`. `--port` is optional and stores **`null`**, not `8080`; the 8080 default is applied at *deploy* time. Pass it anyway, and pass it again on `connect-repo` (see above) |
-| **nixpacks finds no start command** | **the repo has no `connect-repo` route at all** — every service connected to it fails identically with `build <id> failed: build command failed`, web services included. Measured on `render-examples/celery`, whose three roles live only in their `startCommand:`. Catch it with `insta --agent build <dir>` before touching the platform. **The cheap fix is a `Procfile`, not a Dockerfile** — but nixpacks honours exactly **one** entry (`web:` beats `worker:`), so one repo/root-dir yields one image and one start command for *every* service connected to it. Differentiating roles needs `--root-dir` per role, a Dockerfile per directory, or `deploy --image` per role |
-| `type: worker` | a second compute service. **Portless is prebuilt-image-only**, so read the worker notes below before promising it: `services add compute X --port 0` and `connect-repo … --port 0` are both **rejected** (`port must be an integer between 1 and 65535, got: 0`), while `insta --agent deploy --image <ref> --port 0` is **accepted** and is the only path. A repo whose worker identity *is* its `startCommand`, with no Dockerfile, has **no route through `connect-repo`** ("Build and start commands come from detection and cannot be set"). Since the archive lane shipped, the worker does have a route through the local checkout: write a `Dockerfile` whose `CMD` is the worker command and `insta --agent deploy <dir>` it — that lane builds on every plane now. Whether `deploy <dir>` accepts `--port 0` is **unmeasured** (only `deploy --image --port 0` is), so test it before promising a portless worker. Say what you measured rather than improvising |
-| `type: cron` | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
-| `type: pserv` (private service) | a compute service, but **flag it to the user**: every compute service gets a public default domain with its first successful deploy (step 1 above; `services add` alone leaves `domain: null`), so a Render private service stops being unreachable from the internet |
-| `runtime: python` / `node` / `ruby` / `go` (any non-`image`; older blueprints spell it `env:`) | `insta --agent compute connect-repo <owner/repo> X` — nixpacks does what the buildpack did |
-| `buildCommand:` | **nixpacks does not run the script**, but do not assume nothing in it happens: its Django provider runs `manage.py migrate` itself at start (measured — a full `admin, auth, contenttypes, sessions` migrate ran against the bound insta pg16 with no instruction from us). The **asset** half is what it skips, so read the script and re-home anything else: `collectstatic` or an `npm run build` needs a `Dockerfile` or nixpacks' own detected build step. A migration you want under your control rather than run at every boot belongs in `insta --agent compute exec` |
-| `startCommand:` | nixpacks picks its own, which is often not this one. If the app needs a specific server invocation (`gunicorn mysite.asgi:application -k uvicorn.workers.UvicornWorker`, a `-w` count, an ASGI vs WSGI entrypoint), that is a `Dockerfile` `CMD`, so this row can turn the whole service into the Dockerfile lane |
-| `runtime: image`, `image.url` | `insta --agent deploy --image <url> --port <n>` instead; do NOT reach for connect-repo |
-| `envVars: [{fromDatabase: {...}}]` | `insta --agent secrets bind DATABASE_URL postgres/X --to compute/Y` |
-| `envVars: [{fromService: {...}}]` | **bind it if the target is a credential-minting service** — `redis`, `mysql` and `mongodb` all are, so `insta --agent secrets bind <NAME> redis/X --to compute/Y --source-name REDIS_URL` is right and copying the DSN as a plain secret is the anti-pattern this file warns about elsewhere. Only a `fromService` pointing at another **compute** service has to become a plain secret |
-| `envVars: [{value: V}]` | `insta --agent secrets set KEY V` |
-| `envVars: [{generateValue: true}]` | Render invented it. **Carry the existing value over, do not regenerate** — for a Django `SECRET_KEY` a new one logs out every session, and for an app's own signing keys it invalidates issued tokens |
-| `envVars: [{sync: false}]` | never in the file. Read it from the API below, or ask the user |
-| `maxmemoryPolicy:` on a redis | no insta knob. Render's own queue examples set `noeviction` deliberately, so tell the user their queue's eviction behaviour is not reproducible here |
-| `ipAllowList: []` on a datastore | no insta knob, and the default runs the **other way**: a provisioned redis came back `public=true`. A Render datastore restricted to internal connections becomes publicly addressable here, so flag it like the `pserv` row |
-| `envVarGroups:` | **not returned by the env-vars API** (see below); resolve these from the dashboard |
-| `disk: {mountPath, sizeGB}` | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>` later. **The disk appears when the machine is next created, so `insta --agent compute restart X` is enough — no rebuild.** Measured twice on a running volumeless service: attach, restart only, and `/data` is mounted; the platform labels that event `wake`, not `deploy`, which is the mechanism. A volume attached *before* the first deploy is present on that first deploy. (The other skill files now say "deploy or restart"; the CLI's own string still says "the next deploy", which is true but not the cheapest path — on a nixpacks service that difference is a 10-second restart versus a full rebuild.) **Do not mirror Render's `sizeGB`:** attach at the free 10Gi cap, because growing is paid-plan-only even from 1Gi to 2Gi and shrinking is impossible, so a literal small size is a one-way door |
-| `disk` holding **user uploads** | the volume is usually the wrong tool: prefer `insta --agent services add storage <n>` plus an S3 upload provider (see the addon table), which is the only option that survives scale-out. If you keep the volume, the path fix must be **in the image** — a `Dockerfile` symlink to `/data` — because a symlink made with `compute exec` is wiped on the next restart (measured). Check whether the framework can be pointed at the mount instead (Strapi: `server.dirs.public`), and note a fresh volume contains only `lost+found`, so a framework that requires its upload directory to pre-exist will crashloop until you create it |
-| `healthCheckPath` | not a knob here; insta health-checks the port |
-| `numInstances` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
-| `plan:` | `insta --agent compute limits` / `insta --agent db limits` |
-| `region:` | `--region` on `insta --agent services add` (values from `insta --agent regions`) |
-| `autoDeploy: false` | nothing to do, and the default runs the other way for a **public** repo: `connect-repo --public` prints `deploys are manual from here: pushes will not redeploy (public repo)`, so nothing auto-deploys until you ask. `builds.auto_deploy` is not implemented on the compute plane either |
-
-**Check for platform-detection env vars before you deploy anything.** Apps routinely branch on
-whether the *source platform's own* variable is present, and every one of those branches flips when
-the app lands here. The idiom to grep for is a bare presence test on the platform name:
-
-```bash
-grep -rnE "RENDER|DYNO|HEROKU|RAILWAY|FLY_APP_NAME|FLY_ALLOC_ID|VERCEL" --include='*.py' \
-  --include='*.js' --include='*.ts' --include='*.rb' --include='*.go' .
-```
-
-`render-examples/django` is the worked example, and it fails **both** ways:
-
-```python
-DEBUG = 'RENDER' not in os.environ            # no RENDER here, so DEBUG becomes True
-ALLOWED_HOSTS = []
-RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_EXTERNAL_HOSTNAME: ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-```
-
-`ALLOWED_HOSTS` stays empty, so Django answers **HTTP 400 `DisallowedHost` to every request** on the
-insta domain. **The platform reports the service as healthy while this happens**, because the check
-is TCP on the port (`adapters/fly.ts`: `config.checks = { port: { type: 'tcp' } }`) and the app is
-listening — it just refuses every request. `insta --agent compute status` looking fine proves nothing; curl
-the URL.
-
-All three outcomes below were **measured end to end** on this repo (prod, insta-compute, 2026-09-09),
-after `connect-repo` built it with nixpacks and the `DATABASE_URL` binding worked:
-
-| what you set | result |
-|---|---|
-| nothing | **400** `DisallowedHost` on every request |
-| `RENDER_EXTERNAL_HOSTNAME=<insta domain>` **only** | **200**, the page serves |
-| that **plus** `RENDER=1` | **500** |
-
-Read the ladder before copying the middle row. It works because `DEBUG` keys off `RENDER`, which
-stays unset, so the host list gets its entry while the manifest static-files backend never switches
-on. Adding `RENDER=1` flips `DEBUG=False`, which activates that backend, whose manifest the
-`collectstatic` in `buildCommand` was supposed to build — hence the 500. **So the middle row leaves
-the app serving with `DEBUG=True`, which leaks tracebacks and is not an end state.** Use it to get a
-cutover answering, then fix it properly: give the app its own way to set `ALLOWED_HOSTS` and `DEBUG`
-from env instead of impersonating the platform it left, and re-home the static build per the
-`buildCommand` row.
-
-**Every source hits this, but the shape differs, and Render is the mildest case.** Read from each
-platform's own official Django example, which is what real user code is derived from:
-
-| source | what its example does | what you get here |
-|---|---|---|
-| **Render** | `ALLOWED_HOSTS` appended from `RENDER_EXTERNAL_HOSTNAME` | 400, and **one env var fixes it** (the ladder above) |
-| **Heroku** | `IS_HEROKU_APP = "DYNO" in os.environ`; then `["*"]` if set, else `[".localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"]` | 400, and **no env var can fix it** — both branches are literals, so the code must change. `DEBUG` keys off `ENVIRONMENT`, not the platform, so at least it stays off |
-| **Fly** | hardcoded `['localhost', '127.0.0.1', '.fly.dev']` (their guide names no Fly variable) | 400, **code must change**. Do not go looking for `FLY_APP_NAME` in the settings; it is usually not there |
-| **Railway** | `ALLOWED_HOSTS = ["*"]`, unconditional | **works as-is** — they bought that by giving up the check entirely |
-
-So the useful expectation is not "grep for the platform variable" but **"assume the app cannot name
-its own new hostname, and find out how it learns one."** Sometimes that is a variable you can set,
-often it is a literal you have to edit, and occasionally (Railway) there is nothing to do.
-
-**And there is nothing on this side for it to read.** `PORT` is the only variable the *control
-plane* adds (`provisioning/deploy.ts`: `const env = { PORT: String(port), ...envBundle }`), and
-everything else you set came from a secret or a binding. The machine env is not that short, though:
-the orchestrator adds its own, measured on a live machine — `KUBERNETES_SERVICE_HOST`,
-`KUBERNETES_PORT_443_TCP*`, `INTERNAL_DNS_*`, and per sibling service
-`INSTA_SVC_<hex>_SERVICE_HOST` / `_SERVICE_PORT`. So there **is** in-cluster discovery for siblings,
-and an app grepping its env for platform markers will see `KUBERNETES_*`. What none of them carry is
-the service's **own public domain**, which is the point here. There is no
-insta equivalent of `RENDER_EXTERNAL_HOSTNAME`, `RAILWAY_PUBLIC_DOMAIN` or `FLY_APP_NAME`, so an app
-cannot discover its own public domain here. **Read the domain off `insta --agent services list` and set it
-explicitly** into whatever name the app reads. Do not wait for the app to work it out.
-
-Note this problem belongs to the *pair* of platforms, not to the target: an app leaving Fly for
-Railway breaks the same way (`.fly.dev` is a literal in Fly's own example, and Railway serves it at
-`*.up.railway.app`), and Railway's own Fly and Render guides do not mention it either. Nobody
-documents this, so do not expect the source platform's migration docs to have warned the user.
-
-A quieter cousin: a config helper with a **fallback default** hides a failed binding instead of
-reporting it. `dj_database_url.config(default='postgresql://…@localhost:5432/…')` means a missing
-`DATABASE_URL` degrades to localhost, so a bind you forgot looks like a network fault. Confirm the
-value on the machine (step 5) rather than inferring it from the app's behaviour.
-
-**Env var values come from the API, not the CLI.** The Render CLI has **no** env-var subcommand at
-all (`deploys`, `jobs`, `keyvalues`, `logs`, `postgres`, `restart`, `services`, `workflows`,
-`workspaces`, `blueprints`, `environments`, `projects`, plus auth and session commands — that is the
-whole surface). The REST API does return values:
-
-```bash
-curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
-  "https://api.render.com/v1/services/$SVC/env-vars" | jq -r '.[] | "\(.envVar.key)"'
-```
-
-Each item carries `key` **and** `value`, so this is how a `generateValue` or `sync: false` secret is
-recovered without the dashboard. Two limits: it returns only vars belonging **directly** to the
-service, so an `envVarGroups` member is invisible here, and the user has to mint the API key
-(Dashboard → Account Settings → API Keys) because there is no CLI login that yields one. **Ask for
-that key at the start**, not after provisioning. Print keys only; never echo a value into the
-transcript.
-
-CLI shape, measured rather than read off the docs: `render services -o json --confirm` returns
-services **and** databases together; `render psql <id> --command "…" -o json --confirm` is the
-**only** non-interactive query path; `render postgres get` does **not** expose a connection string
-(dashboard only); `render jobs create` covers one-offs and `render logs` / `render restart` /
-`render deploys` exist, but **scaling and custom domains have no CLI command at all**. There is no
-maintenance-mode switch, so step 2 means scaling each service to zero or suspending it by hand.
-Render Key Value (`render kv`) is the Redis equivalent. A **free** Postgres carries an `expiresAt`
-30 days out, is capped at 1 GB, defaults its `ipAllowList` to `0.0.0.0/0`, and has **no backups and
-no logical exports** — the connection string is the only way data leaves.
+## Heroku
 
 **Heroku.** The richest export surface: `config -s` yields `KEY=value` lines, `pg:backups` and
 `maintenance:on` are single commands, and the `Procfile`'s `web:` / `worker:` map straight onto
 compute services. No volumes. `app.json`, if present, declares the addons — read it to enumerate
 what to provision.
-
-**Railway.** Closest model (services + variables + IaC), so the concept mapping is nearly 1:1 — but
-the export has three traps, all measured:
-
-- **`railway variable list` always RESOLVES references**, in both the table and `--json`, and no flag
-  shows the raw form. You will never see a `${{…}}`. The hazard runs the other way: a resolved
-  `DATABASE_URL` is a literal pointing at **Railway's** Postgres, so copying it verbatim leaves the
-  migrated app talking to the database you are leaving. Skip every connection string you are
-  binding. The raw form exists only via `railway api` with `variables(… unrendered: true)`, and that
-  query returns a **smaller** key set — the `RAILWAY_*` built-ins exist only at render time and are
-  not stored variables worth migrating.
-- **`railway status` reflects only LIVE deployments.** A stopped Postgres whose volume still holds
-  data is indistinguishable from one never provisioned (`latestDeployment: null` for both). Check
-  `railway deployment list` per service before concluding a database is unused.
-- **A volume cannot be read while its service is stopped** — no offline browse; `render`-style file
-  listing refuses with "has no active deployment", so auditing one means starting the service.
-
-**Ask for a project token before you start.** `railway link` and `railway service` are interactive
-pickers, and you cannot answer a picker. `RAILWAY_TOKEN` is project-scoped (Project Settings →
-Tokens) and `RAILWAY_API_TOKEN` is account-scoped; take the **project** one for a single migration.
-Also note `railway link` writes the **global** `~/.railway/config.json` keyed by cwd, not a local
-file, so "cd somewhere safe" is not isolation.
-
-**Translate the project yourself.** There is no `render.yaml` equivalent declaring the services:
-`railway.json` carries only build and deploy config, and the services live in the project, so read
-`railway status --json` for the shape and `railway variable list` per service for the env.
-
-| On Railway | Do this |
-|---|---|
-| a service, `builder: RAILPACK` or `NIXPACKS` | `insta --agent services add compute X --port <n>`, then `insta --agent compute connect-repo <owner/repo> X` |
-| a service built from a Dockerfile | same, `connect-repo` builds the Dockerfile when there is one |
-| a service deployed from an image | `insta --agent deploy --image <url> --port <n>` |
-| the Postgres service | `insta --agent services add postgres X` |
-| Redis / MySQL / MongoDB services | `insta --agent services add redis\|mysql\|mongodb X`. **`--source-name` is mandatory** when you bind one, and it fails closed: `sourceName must be one of REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_USERNAME, REDIS_PASSWORD`. That is the guard postgres lacks, which is why the `PGHOST` footgun has no redis equivalent. Also: insta's redis DSN is **`rediss://`** (TLS), where Render's is plain `redis://` — celery/kombu rejects a `rediss://` broker without `?ssl_cert_reqs=`, so a verbatim bind is not always sufficient |
-| `deploy.startCommand` running migrations | do NOT carry it over as a startup gate; run migrations with `insta --agent compute exec` (see SKILL.md) |
-| `${{Postgres.DATABASE_URL}}` and friends | `insta --agent secrets bind DATABASE_URL postgres/X --to compute/Y` |
-| an app reading `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPORT` | a code change to read `DATABASE_URL`, per step 1 above. Railway injects these by default, so expect it |
-| `RAILWAY_*` built-ins, `PORT` | skip: render-time only, and the platform supplies `PORT` here |
-| any other variable | `insta --agent secrets set KEY` |
-| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the Render `disk:` row), and download the source contents while its service still runs |
-| `numReplicas` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
-| a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
-| multi-region replicas | not available; one region per service, chosen with `--region` at add time |
-
-Railway's Postgres template is **18**, so step 3 is a downgrade. Its volumes carry the same caveat
-as any: creating a target volume does not copy contents.
-
-**Fly.** The easiest source of the four, and the only one that is not a Postgres downgrade: Fly
-Managed Postgres runs **16**, the same major as insta's, so step 3 needs no filter. A Fly app also
-already has a `Dockerfile` and a `fly.toml`, so `insta --agent deploy . --port <n>` from the local
-checkout works **on every plane** — the flyctl lane builds the Dockerfile on Fly-backed compute, the
-archive lane builds it on the build gateway for insta-compute — and needs no GitHub connection. A CLI
-that predates the archive lane answers `source builds are not supported on the insta-compute
-provider yet`: `insta upgrade`. `internal_port` in `fly.toml` is the `--port` value, and `[env]`
-entries become plain secrets. Note the builder **ignores the repo's `fly.toml`** on the insta-compute
-lane (`instaflybuilder` writes its own; the comment says caller config never reaches it), so nothing
-in that file affects the build here. `[processes]` maps onto compute services, and
-volumes carry the same caveat as any. **The one real obstacle is secrets:** `fly secrets list`
-returns names and digests only, because "the actual value of the secret is only available to the
-application", so there is no export. Read them off the running machine before you stop it — **one name at a
-time, never the whole env**, and piped so the value never reaches your terminal:
-**pipe it, never print it** — one name at a time, straight into the target, so the value never
-reaches your output:
-
-```bash
-fly ssh console -a <app> -C 'printenv <NAME>' | tr -d '\r\n' | insta --agent secrets set <NAME>
-```
-
-`insta --agent secrets set` reads stdin, so nothing is displayed and nothing enters shell history. **Never
-`fly ssh console -C env`**: it dumps every credential the app holds into your transcript at once.
-And never run the `printenv` on its own to "check" a value first; that is the leak. If you cannot
-pipe, have the user re-enter the value instead.
-
-**InsForge (self-hosted only — see the verification note at the end of this file for why InsForge Cloud is
-not a supported source).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
-`postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
-built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
-database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
-2026-09-14** (`insforge-oss` v2.3.2, source PG 15.13.4 → insta pg 16.15): every command below ran; the hosted API
-then served the migrated rows, the migrated users with their original passwords, and the migrated files. **Edge functions migrate too**, measured
-separately the same day: see the Deno section below. PostgREST is on a **public** URL here, JWT-gated with `anon` as
-the fallback role (Supabase's posture, not InsForge's compose default).
-
-*Why managed postgres and not InsForge's own image:* compute exposes HTTP only, so a postgres container on compute is
-unreachable by its siblings. Managed pg 16 covers what InsForge needs, measured on staging: the DSN's role is
-**superuser** with CREATEROLE, `pg_cron` is in `shared_preload_libraries` with `cron.database_name` = your database,
-`CREATE EXTENSION` works for `pgcrypto`, `http`, `pg_cron` (`vector` preinstalled), event triggers and
-`ALTER DATABASE … SET` work, LISTEN/NOTIFY works, and the client **must** speak TLS (SNI-routed lane; `sslmode=disable`
-lands on the wrong instance). The one thing it lacks is InsForge's `insforge_pg_utils` preload hook, which lets the
-non-owner `project_admin` role manage RLS policies on InsForge's own tables and run `CREATE EXTENSION`. RLS behaved
-**identically** without it; `CREATE EXTENSION` through InsForge's SQL endpoint returned
-`403 permission denied to create extension`. `ALTER ROLE project_admin SUPERUSER` closes that (measured; `GRANT
-CREATE ON DATABASE` covers trusted extensions only). **Say what it costs before you do it:** `project_admin` is the
-role InsForge runs admin SQL and its dashboard SQL editor as, so making it superuser means anything that can execute
-SQL through that path bypasses RLS and every other privilege check — the hook exists precisely to avoid that on a
-shared box. Here the connection string insta hands you is already superuser, so the escalation adds no reachable
-privilege that the operator did not already hold, and a project that never installs extensions can simply skip this
-line and keep `project_admin` unprivileged. There is no narrower supported alternative today: the hook is a
-compiled preload library and managed instances cannot load one.
-
-**The four secrets travel.** `JWT_SECRET`, `ENCRYPTION_KEY`, `ACCESS_API_KEY`, `ACCESS_ANON_KEY` from the source
-`.env` go onto the target **verbatim**: sessions stay valid, `system.secrets` (JWT keypair, API keys) decrypts, the
-app's anon key is unchanged. `ENCRYPTION_KEY` falls back to `JWT_SECRET` when unset, so a source that never set it
-must keep `JWT_SECRET` for both reasons. Read them from the file, never print them.
-
-**Four of the lines below are STEPS, not checks, and the difference matters now that verification is
-the developer's.** A check confirms the move worked; a step is something that, left out, makes the move
-wrong with nothing to notice: the dump-completeness guard (a wrong database name yields an empty file
-that restores with zero errors), `UPDATE cron.job SET database` (the dump names the source's database,
-so every schedule silently stops), binding **both** bucket names (an older source writes uploads to
-local disk while the bucket stays empty), and copying files before dumping. Never drop these on the
-grounds that the developer will verify.
-
-**Order matters three times.** (1) **Every source writer stops before EITHER snapshot is taken.** Step 2 of the
-ordered cutover applies here in full: the files and the database are two halves of one state, so an upload that
-lands between them is a row in the dump with no object behind it, and a delete is an orphan. `docker compose stop
-insforge postgrest deno` first; postgres itself stays up, because the dump reads it. **Stopping the containers is
-not the whole barrier here:** InsForge schedules are `pg_cron` jobs, and pg_cron fires *inside* postgres, the one
-container still running — so a schedule keeps writing across both snapshots unless you deactivate the jobs too.
-Deactivate them on the source, and reactivate exactly those on the target after the restore (the dump carries
-`cron.job` with its `jobid`s, and every row in it is inactive because you deactivated them before dumping). (2) **Files before the dump,
-inside that barrier:** bucket and object metadata live in `storage.buckets` / `storage.objects` and ride the dump,
-so a dump taken before the files are copied leaves the target listing nothing (measured; the restore had to be
-redone). (3) **PostgREST before the backend:** the backend needs `POSTGREST_BASE_URL` at boot and a compute service
-has no URL until its first deploy.
-
-The sequence, as measured (`<v>` = the source's `insforge-oss` tag; deploy the **same** version — the dump carries
-`system.migrations`, and a newer image would run further migrations on boot, an older one would refuse):
-
-```bash
-# 0. read .env FIRST (compose reads it automatically; your shell does not, and everything below needs it), then
-#    stop every source writer
-envval() { sed -n "s/^$1=//p" .env | head -1; }      # no `source .env` — values are unquoted and would be executed
-JWT_SECRET="$(envval JWT_SECRET)"; ENCRYPTION_KEY="$(envval ENCRYPTION_KEY)"
-SRC_DB="$(envval POSTGRES_DB)"; SRC_DB="${SRC_DB:-insforge}"   # compose's own default; NOT necessarily `insforge`
-[ -n "$JWT_SECRET" ] || { echo 'no JWT_SECRET in .env — wrong directory?' >&2; exit 1; }
-docker compose stop insforge postgrest deno          # postgres stays up: the dump reads it
-src() { docker compose exec -T postgres psql -U postgres "$SRC_DB" -v ON_ERROR_STOP=1 "$@"; }   # stop on SQL error:
-src -Atc 'select jobid from cron.job where active' > cron-active.txt || exit 1   # psql exits 0 on one otherwise,
-src -c 'update cron.job set active = false' || exit 1   # and an empty file would read as "no schedules". The
-# `|| exit 1` is the half that matters: ON_ERROR_STOP only sets an exit code, and this block has no `set -e` (which
-# would misfire on the `[ -s … ] &&` line later), so without it a failed deactivation just scrolls past — pg_cron
-# pg_cron's key is `jobid`, not `id`.               # runs INSIDE postgres, the one container still up, so its jobs
-                                                     # would keep writing across both snapshots
-# (rolling back to the source means re-running that update with `= true where jobid in (…)` there as well)
-
-# services
-insta --agent services add postgres db
-insta --agent services add storage files
-insta --agent services add compute api --port 7130 --always-on --volume 10   # volume: logs, local-disk fallback
-insta --agent services add compute postgrest --port 3000 --always-on
-
-# 1. initialise the managed database the way InsForge's postgres image does on first boot
-PG="$(insta --agent db url --group db)"
-psql "$PG" -X -v ON_ERROR_STOP=1 -f deploy/docker-init/db/db-init.sql     # roles anon/authenticated/project_admin,
-                                                                           # grants, 2 event triggers: 15 stmts, 0 errors
-# jwt.sql says `ALTER DATABASE postgres SET …`. A managed instance HAS a database named postgres, so verbatim it
-# SUCCEEDS SILENTLY against the wrong database (measured). Retarget it to the current one:
-{ echo 'SELECT current_database() AS dbname \gset'
-  sed 's/ALTER DATABASE postgres /ALTER DATABASE :"dbname" /' deploy/docker-init/db/jwt.sql
-} | JWT_SECRET="$JWT_SECRET" JWT_EXP=3600 psql "$PG" -X -v ON_ERROR_STOP=1 -f -
-# postgresql.conf cannot be mounted; its GUCs become per-database settings, same values as the conf:
-DB="$(psql "$PG" -Atc 'select current_database()')"
-psql "$PG" -v ON_ERROR_STOP=1 \
-  -c "ALTER DATABASE \"$DB\" SET app.encryption_key TO '${ENCRYPTION_KEY:-$JWT_SECRET}'" \
-  -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_role TO 'project_admin'" \
-  -c "ALTER DATABASE \"$DB\" SET insforge.extension_grant_role TO 'project_admin'" \
-  -c "ALTER DATABASE \"$DB\" SET insforge.policy_grant_tables TO '<value from postgresql.conf>'" \
-  -c "ALTER DATABASE \"$DB\" SET insforge.internal_schemas TO '<value from postgresql.conf>'" \
-  -c "ALTER ROLE project_admin SUPERUSER"                                  # stands in for insforge_pg_utils
-
-# 2. secrets and bindings (values from the source .env, from stdin — never as arguments)
-for n in JWT_SECRET ENCRYPTION_KEY ACCESS_API_KEY ACCESS_ANON_KEY ROOT_ADMIN_USERNAME ROOT_ADMIN_PASSWORD \
-         FLY_API_TOKEN FLY_ORG VERCEL_TOKEN VERCEL_TEAM_ID VERCEL_PROJECT_ID; do   # the last five: see the
-                                                    # compute note below. Names absent from .env are skipped.
-  v="$(envval "$n")"; [ -n "$v" ] || continue     # a name absent from .env must stay absent here: setting an EMPTY
-  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/api   # ENCRYPTION_KEY defeats its own
-done                                              # fallback to JWT_SECRET and breaks system.secrets decryption
-insta --agent secrets bind PGRST_DB_URI postgres/db --to compute/postgrest   # PostgREST takes the DSN as-is (sslmode inside)
-grep '^JWT_SECRET=' .env | cut -d= -f2- | insta --agent secrets set PGRST_JWT_SECRET --service compute/postgrest
-insta --agent secrets set PGRST_DB_SCHEMA public --service compute/postgrest # + PGRST_DB_ANON_ROLE anon, PGRST_DB_POOL 50,
-                                          # PGRST_DB_CHANNEL_ENABLED true, PGRST_DB_CHANNEL pgrst, PGRST_SERVER_PORT 3000: copy the compose file
-insta --agent secrets bind DATABASE_URL postgres/db --to compute/api        # its bootstrap scripts read this…
-# …but the runtime reads POSTGRES_HOST/PORT/DB/USER/PASSWORD. Split the DSN in-process, never print it:
-python3 - "$PG" <<'PY2' | while IFS== read -r k v; do printf '%s' "$v" | insta --agent secrets set "$k" --service compute/api; done
-import sys, urllib.parse as u; d = u.urlsplit(sys.argv[1])
-for k, v in (("POSTGRES_HOST", d.hostname), ("POSTGRES_PORT", d.port or 5432), ("POSTGRES_DB", d.path.lstrip("/")),
-             ("POSTGRES_USER", u.unquote(d.username or "")), ("POSTGRES_PASSWORD", u.unquote(d.password or ""))): print(f"{k}={v}")
-PY2
-insta --agent secrets set PGSSLMODE require --service compute/api           # node-postgres reads it; the lane requires TLS
-insta --agent secrets bind S3_ACCESS_KEY_ID     storage/files --source-name AWS_ACCESS_KEY_ID     --to compute/api
-insta --agent secrets bind S3_SECRET_ACCESS_KEY storage/files --source-name AWS_SECRET_ACCESS_KEY --to compute/api
-insta --agent secrets bind S3_BUCKET            storage/files --source-name BUCKET_NAME           --to compute/api
-insta --agent secrets bind AWS_S3_BUCKET       storage/files --source-name BUCKET_NAME           --to compute/api
-# BOTH names, always. `S3_BUCKET` only exists from 2.3.x (`app.config.ts`: 2.2.6 reads `AWS_S3_BUCKET`, 2.3.2 reads
-# `S3_BUCKET || AWS_S3_BUCKET`), and a source below that **fails SILENTLY**: with only `S3_BUCKET` bound, uploads
-# answer 201, rows land in `storage.objects`, and the bytes go to the container's local disk while the bucket stays
-# empty (measured on 2.2.6). Verify with `insta --agent storage list --service files` after one upload, not with
-# the API's status code.
-insta --agent secrets bind S3_ENDPOINT_URL      storage/files --source-name AWS_ENDPOINT_URL_S3   --to compute/api
-insta --agent secrets bind S3_REGION            storage/files --source-name AWS_REGION            --to compute/api
-insta --agent secrets set S3_FORCE_PATH_STYLE true --service compute/api
-insta --agent secrets set S3_USE_PRESIGNED_URLS true --service compute/api
-insta --agent secrets set DENO_RUNTIME_URL http://deno.invalid:7133 --service compute/api   # or the functions service URL
-insta --agent secrets set INSFORGE_TELEMETRY_DISABLED 1 --service compute/api
-
-# 3. files FIRST (writers already stopped in step 0): out of the source volume, into the bucket under InsForge's
-#    key layout ${APP_KEY:-local}/<bucket>/<key>
-docker compose cp insforge:/insforge-storage/. ./storage-data/               # on disk: <bucket>/<key>
-eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
-  '"export AWS_ACCESS_KEY_ID=\(.S3_ACCESS_KEY_ID|@sh) AWS_SECRET_ACCESS_KEY=\(.S3_SECRET_ACCESS_KEY|@sh) S3_BUCKET=\(.S3_BUCKET|@sh) S3_ENDPOINT_URL=\(.S3_ENDPOINT_URL|@sh)"')"
-aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
-
-# 4. THEN the database, dumped the way InsForge's deploy/backup.sh dumps it: plain, WITH owners and privileges
-docker compose exec -T postgres pg_dump -U postgres "$SRC_DB" > dump.sql || exit 1   # $SRC_DB, not a literal
-grep -q '^-- PostgreSQL database dump complete' dump.sql \
-  || { echo "dump.sql is empty or truncated — read pg_dump's stderr; \$SRC_DB was '$SRC_DB'" >&2; exit 1; }
-# Both guards are the point: pg_dump writes its errors to STDERR, so a wrong database name leaves dump.sql empty,
-# and an empty file restores with 0 errors — the stated pass condition, met against an empty database. The trailing
-# marker also catches a dump truncated by a disk filling up. pg_dump 15 against 15 needs no filtering; a host
-# pg_dump ≥17 adds ONE PG16-incompatible line, the only one (measured): grep -v '^SET transaction_timeout'
-psql "$PG" -X -v ON_ERROR_STOP=0 -f dump.sql 2>&1 | tee restore.log          # 0, not 1: collect EVERY error, not the first
-errs="$(grep -cE '^(psql:.*)?ERROR' restore.log || true)"                    # measured: 0 (791 stmts; 96 OWNER TO, 282 GRANTs)
-[ "$errs" = 0 ] || { echo "restore: $errs errors — read restore.log, fix the cause, restore into a FRESH postgres service" >&2; exit 1; }
-psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # the dump names the source database (UPDATE 2)
-[ -s cron-active.txt ] && psql "$PG" -v ON_ERROR_STOP=1 -c "UPDATE cron.job SET active = true WHERE jobid IN ($(paste -sd, cron-active.txt))"
-                                                                             # step 0 deactivated these; ids travel in the dump
-
-# 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
-insta --agent deploy --image postgrest/postgrest:v12.2.12 --port 3000 --group postgrest
-insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from services list>" --service compute/api
-insta --agent deploy --image ghcr.io/insforge/insforge-oss:<v> --port 7130 --group api   # boots, `migrate:up` finds the ledger complete
-insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/api   # + VITE_API_BASE_URL, same value
-insta --agent compute restart api
-```
-
-**One more thing to tell the user before the cutover:** the target inherits the source's auth
-configuration, so a source with email verification on and no SMTP configured produces a target where existing users
-are fine but **new signups cannot log in** (`403 Email verification required`, `accessToken: null`). Measured.
-Configure SMTP or turn verification off before you hand the app over.
-
-*Pass:* the restore reported zero errors, **the backend booted on the source's own version** —
-`GET /api/health` returns `{"status":"ok","version":"<v>"}` and the boot log says
-`No migrations to run! Migrations complete!` — and `system.migrations` counts match. That third one is
-nearly free and worth keeping *here* specifically: InsForge owns this schema, so its own ledger
-agreeing is the schema's author confirming the restore, which no generic app can offer. Everything
-past that — do my bookings show up, can my users sign in, do my files download — is the developer's,
-as in step 4.
-
-**Two properties this path has, measured rather than re-checked per migration.** Say them; do not turn
-them into gates. (a) **Sessions survive**: on both runs `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and
-`JWT_KEY_ID` came back byte-identical on the target and a fresh login minted RS256 under the source's
-own `kid`, so nobody logs in again and no OAuth or API key is re-entered. (b) **Files arrive intact**:
-public objects download anonymously through a presigned redirect, private ones 401 anonymous and 200
-with a session, sha256 equal to source.
-
-Then the app: change `baseUrl` in `createClient` to the api host — keys unchanged.
-
-**Edge functions: a fourth compute service, and they work.** Measured on staging 2026-09-14, four functions
-including one inserted **straight into `functions.definitions` by SQL** — exactly what `pg_restore` does — which
-answered 200 with nothing restarted. The host is stateless and reads that table per request, so function code needs
-no migration of its own beyond the dump it already rides in.
-
-*Why it takes a build.* No deployment target runs a prebuilt image here: compose mounts `functions/` into the stock
-`denoland/deno:alpine-2.0.6` and supplies a `command:`, Railway builds from the repo and overrides the start
-command, Zeabur inlines `server.ts` into its template. `deploy/Dockerfile.deno` exists but **has no `CMD`** — it was
-never meant to run alone — and `deno.json` has no `tasks.start`, so nixpacks detects the runtime and stops:
-`setup: deno`, `start:` empty, `Error: No start command could be found` (measured). Until this platform can set a
-start command, you supply one in a Dockerfile:
-
-```bash
-SRC=<insforge checkout>; TAG=<the tag the backend runs>   # match the backend's version, not `main`
-mkdir -p deno-build && cd deno-build
-git -C "$SRC" archive "$TAG" functions | tar -x           # NO --strip-components: the Dockerfile does
-git -C "$SRC" show "$TAG":deploy/Dockerfile.deno > Dockerfile   # `COPY functions /app/functions`
-cat >> Dockerfile <<'EOF'
-# Upstream ends at `USER deno` and stops there: no CMD, because compose supplies `command:`.
-# These four lines are the whole of what this platform is missing, written into the image.
-ENV DENO_DIR=/deno-dir
-RUN deno cache --no-lock /app/functions/server.ts
-EXPOSE 7133
-CMD ["deno","run","--no-lock","--unstable-worker-options","--allow-net","--allow-env",\
-     "--allow-read=./functions/worker-template.js","functions/server.ts"]
-EOF
-insta --agent build .                                     # from INSIDE deno-build. Verdict must read
-                                                          # `deployable`, not `needs-attention`
-insta --agent services add compute deno --port 7133 --always-on
-
-# Secrets are per-service: nothing set on compute/api reaches compute/deno. Copy the ones it shares,
-# straight across, without either value passing through your terminal. The umask and the trap are the
-# point: a default 0022 would leave every credential below world-readable, and the guard exits.
-umask 077
-API_ENV="$(mktemp -t insta-api-env)"        # OUTSIDE deno-build: `deploy .` uploads that whole
-trap 'rm -f "$API_ENV"' EXIT INT TERM       # directory to the remote builder, and a secrets dump
-insta --agent secrets --print --json --service compute/api > "$API_ENV"   # inside it would ride along
-for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
-         JWT_SECRET POSTGREST_BASE_URL; do
-  v="$(jq -r --arg k "$n" '.[$k] // empty' "$API_ENV")"
-  [ -n "$v" ] || { echo "compute/api has no $n" >&2; exit 1; }
-  printf '%s' "$v" | insta --agent secrets set "$n" --service compute/deno
-done
-# ENCRYPTION_KEY only if the source actually set one. Absent is a supported shape — the host falls back
-# to JWT_SECRET, the same fallback the backend uses — and setting it empty would break both.
-enc="$(jq -r '.ENCRYPTION_KEY // empty' "$API_ENV")"
-[ -z "$enc" ] || printf '%s' "$enc" | insta --agent secrets set ENCRYPTION_KEY --service compute/deno
-for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
-  printf '%s' "${kv#*=}" | insta --agent secrets set "${kv%%=*}" --service compute/deno
-done
-
-insta --agent deploy . --port 7133 --group deno           # still inside deno-build
-printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
-insta --agent compute restart api                         # the backend proxies /functions/:slug to that URL
-```
-
-Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with
-`ENCRYPTION_KEY || JWT_SECRET`, so giving it only `JWT_SECRET` when the source set both means it silently decrypts
-nothing. **`PGSSLMODE` is a no-op here** — `functions/server.ts` builds its config from the five `POSTGRES_*` and
-never reads it; TLS works because the Deno driver negotiates it. **Cold starts cost about a second, and there is no
-tested fix**: each cold worker does `await import('npm:@insforge/sdk')`, roughly 40 registry downloads on first
-invocation (1471 ms against ~200 ms warm), repeated after every restart. The obvious answer, a volume for the
-module cache, does **not** work as written: insta volumes mount at `/data` and arrive empty (this file's own disk
-row says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
-preparation hidden by the mount, and the container — which runs as the non-root `deno` user — then cannot write
-there. Fixing it needs a runtime chown before dropping privileges, which the measured run did not do. Leave the
-volume off unless you are willing to test that.
-
-**One thing the dump breaks, and you must fix it by hand.** `INSFORGE_BASE_URL` and `INSFORGE_INTERNAL_URL` are
-**reserved** secrets carrying the source's compose-era addresses (`http://localhost:17130`,
-`http://insforge:7130`). The API refuses to update a reserved secret (`Cannot update reserved secret`), and the
-rewrite in `function.service.ts` is gated on `isCloudEnvironment()`, so it never runs here. Every function following
-InsForge's documented `baseUrl: Deno.env.get('INSFORGE_BASE_URL')` pattern dials localhost and fails. The values must be re-encrypted in place in `system.secrets`, with the same scheme the backend
-reads: AES-256-GCM, key `SHA256(ENCRYPTION_KEY)`, stored as `iv:authTag:ciphertext`
-(`backend/src/infra/security/encryption.manager.ts`).
-
-**There is no vetted command for this here, on purpose.** It is a direct ciphertext write to the secret store of a
-database you have just migrated, and nothing in this runbook has been executed against it. Do not improvise one
-against production. Work it out on a branch first, and note that
-**`branch create` does not switch to it** — without the switch every command below still runs against `main`,
-which is the one outcome this step exists to prevent:
-
-```bash
-insta --agent branch create fix-urls        # forks the postgres (CoW) and the compute services
-insta --agent branch switch fix-urls        # REQUIRED: create alone leaves you on main
-insta --agent status                        # confirm `branch fix-urls` before touching anything
-```
-
-A branch's cloned compute services arrive empty and serve nothing until they are
-redeployed (`references/branching.md`), so deploy **both** of them on the branch, api and deno, and point the
-branch's api at the branch's own deno URL before you test. Deploying only the api leaves the function call with
-nowhere to go, and the isolation step fails before it can prove anything. Then work out the update against
-the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
-the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
-plaintext back. Only once that passes, repeat it on `main` with `--branch main`.
-
-**Ask where the app itself runs.** A self-hosted InsForge can host apps three ways, and the answer changes what
-you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
-their own machine. `providers/compute/fly.provider.ts` runs them in the user's **own Fly account** — its comment
-says self-hosters enable compute by setting `FLY_API_TOKEN` and `FLY_ORG`, which is why those two are in the
-secret loop above. `providers/deployments/vercel.provider.ts` pushes frontends, and needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and
-`VERCEL_PROJECT_ID` in the backend's environment or it refuses every management call
-(`VERCEL_TOKEN not found in environment variables`).
-
-**Carry all five when they exist**, for one reason that covers both: those resources belong to the user and keep
-serving, the `compute` and `deployments` schema rows that reference them ride the dump, and without the
-credentials the new backend can see the rows and cannot inspect, redeploy or otherwise manage what they point at.
-The source is stopped, so only one InsForge is ever driving that Fly account or that Vercel project.
-
-A Vercel-hosted frontend needs one more thing the credentials do not give it: its own `baseUrl` points at the old
-InsForge, so it must be **redeployed** after the change, through the migrated backend or through Vercel directly.
-Until it is, the frontend serves fine and talks to a backend that is stopped.
-
-The Docker-socket case is the one with work left: those containers were on the machine the migration stops, so
-nothing is left serving them. That is **optional work after the migration, not part of it** — a compute service
-like any other, `insta --agent deploy <dir> --port <n>` from the app's checkout. Offer it, do not assume it, and
-do not let it delay the cutover. If step 1 of the ordered cutover
-proved the stack on a first database and you restore into a fresh one, rebind **both** `DATABASE_URL` (api) and
-`PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
-measured annoyances: InsForge admin tokens expire after 900 s (`"Invalid token"` on reuse), and PostgREST's schema
-cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
 
 > **Verified as of 2026-09-09**, by executing this runbook against a throwaway project with a seeded
 > Postgres: the cutover ordering, the guard behaviour in step 3, `start` not re-resolving env, the
