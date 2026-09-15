@@ -1135,11 +1135,21 @@ reads: AES-256-GCM, key `SHA256(ENCRYPTION_KEY)`, stored as `iv:authTag:cipherte
 
 **There is no vetted command for this here, on purpose.** It is a direct ciphertext write to the secret store of a
 database you have just migrated, and nothing in this runbook has been executed against it. Do not improvise one
-against production. Do this instead, in order: branch the project (`insta --agent branch create fix-urls`), work
-out the update there against the branch's own database, confirm a function that reads `INSFORGE_BASE_URL` returns
-the new host, and only then repeat it on `main`. Read `ENCRYPTION_KEY` from the service's own secrets rather than
-retyping it, write only the two named rows, and verify by calling a function rather than by selecting the
-plaintext back.
+against production. Work it out on a branch first, and note that
+**`branch create` does not switch to it** — without the switch every command below still runs against `main`,
+which is the one outcome this step exists to prevent:
+
+```bash
+insta --agent branch create fix-urls        # forks the postgres (CoW) and the compute services
+insta --agent branch switch fix-urls        # REQUIRED: create alone leaves you on main
+insta --agent status                        # confirm `branch fix-urls` before touching anything
+```
+
+The branch's compute services need a deploy before they serve, the same as step 1, so deploy the api there and
+point its `DENO_RUNTIME_URL` at the branch's own deno service before you test. Then work out the update against
+the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
+the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
+plaintext back. Only once that passes, repeat it on `main` with `--branch main`.
 
 **Ask where the app itself runs.** A self-hosted InsForge can host apps three ways, and the answer changes what
 you owe the user. `providers/compute/docker.provider.ts` runs containers through a **mounted Docker socket** on
