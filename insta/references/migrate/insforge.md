@@ -1,7 +1,7 @@
 **InsForge, self-hosted.** Read `../migrate.md` first: the ordered cutover there is the procedure, and this file is only what InsForge adds to it. InsForge Cloud is **not** a supported source, and the reason is in the verification note at the end of `../migrate.md`.
 
-**InsForge (self-hosted only — see the verification note at the end of this file for why InsForge Cloud is
-not a supported source).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
+**InsForge (self-hosted only — `../migrate.md`'s verification note says why InsForge Cloud is not a
+supported source).** The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
 `postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
 built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
 database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
@@ -247,8 +247,8 @@ nothing. **`PGSSLMODE` is a no-op here** — `functions/server.ts` builds its co
 never reads it; TLS works because the Deno driver negotiates it. **Cold starts cost about a second, and there is no
 tested fix**: each cold worker does `await import('npm:@insforge/sdk')`, roughly 40 registry downloads on first
 invocation (1471 ms against ~200 ms warm), repeated after every restart. The obvious answer, a volume for the
-module cache, does **not** work as written: insta volumes mount at `/data` and arrive empty (this file's own disk
-row says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
+module cache, does **not** work as written: insta volumes mount at `/data` and arrive empty (the disk
+row in `../migrate.md` says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
 preparation hidden by the mount, and the container — which runs as the non-root `deno` user — then cannot write
 there. Fixing it needs a runtime chown before dropping privileges, which the measured run did not do. Leave the
 volume off unless you are willing to test that.

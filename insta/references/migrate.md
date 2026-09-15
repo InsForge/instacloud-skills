@@ -44,6 +44,11 @@ the source's workers and cron (and the target's proving deploy) before cutting t
 literally the ordering below cannot be completed without a database; that is a gap in the writing,
 not a claim the app is unsupported.
 
+**Read the source file for your platform alongside this one.** This file is the cutover and it is the same for
+every source; `migrate/render.md`, `migrate/railway.md`, `migrate/fly.md` and `migrate/insforge.md` each carry
+what that platform adds. The table under "Per-source deltas" at the end says which is which. Read both, never one
+instead of the other.
+
 ## The ordered cutover
 
 Each step has a condition that must hold before the next one runs. **The ordering is the point:**
@@ -97,7 +102,7 @@ step and a mystery 400 after the cutover. Open the app's settings and answer two
   link builder.
 - **Where does it read the host from?** A variable you can set (Render's
   `RENDER_EXTERNAL_HOSTNAME`), or a literal you must edit (Fly's `.fly.dev`, Heroku's fallback
-  list)? See the per-source table in the Render section for what each platform's apps actually do.
+  list)? See the per-source table in `migrate/render.md` for what each platform's apps actually do.
 
 **`insta --agent build <dir>` is the cheapest pre-flight and this file used not to mention it.** Local,
 offline, no login. It prints the builder, the detected install/build/start commands, the port and
@@ -593,7 +598,7 @@ feeds it to `server.url`, which needs `https://…`. Setting the wrong one of th
 the app reads nothing and keeps its default.
 
 Set only what the app needs. Faking a *second* variable to make it believe it is still on the old
-platform is how the Render case turns a 400 into a 500 (the ladder in the Render section). Treat
+platform is how the Render case turns a 400 into a 500 (the ladder in `migrate/render.md`). Treat
 this as an expedient that gets the cutover serving, and open a follow-up to give the app a neutral
 way to read its host, since the value you just set is named after a platform it has left.
 
