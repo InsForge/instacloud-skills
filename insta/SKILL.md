@@ -38,7 +38,8 @@ fail with setup guidance; never retry a rejected agent request without `--agent`
 Known Codex/Claude Code/Cursor environments also activate agent mode; generic CI or lack of TTY
 does not. MCP tool calls are automatically agent requests. Inspect `insta --agent agent-policy get
 --json` for the current mode and protected branches. All projects initially use `full_access`.
-In `branch_developer`, protected writes are denied; risky unprotected operations require human
+In `branch_specific` (and `customize`, which is the same mode carrying explicit rules),
+protected writes are denied; risky unprotected operations require human
 approval. Forward the approval command to a human admin and retry the unchanged original request
 only after approval; agents cannot approve their own requests. Details and SQL limitations:
 [governance.md](references/governance.md). This protocol requires the managed Platform version that

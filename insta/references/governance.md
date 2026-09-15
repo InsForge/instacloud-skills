@@ -9,7 +9,7 @@ to refresh the linked directory's session, never retry as human.
 ## The gates
 
 All projects start with explicit `full_access` (all classified project operations allowed within
-user RBAC). `read_only` denies mutations and allows sensitive reads. In `branch_developer`, all
+user RBAC). `read_only` denies mutations and allows sensitive reads. In `branch_specific`, all
 classified protected-branch writes are denied, including merge targets and indirect service writes.
 Developers explicitly select protected branches; names like `main` are not automatically protected.
 The unprotected-branch defaults are:
@@ -22,7 +22,7 @@ The unprotected-branch defaults are:
 | `deploy` | allow | code reaching compute (and the build-token mint); also gates `compute restart` (which lands configuration through the same path) and `compute exec`, the latter paired with `secrets.read` |
 | `branch.delete` | **approve** | tearing down an environment |
 | `service.remove` | **approve** | deleting a service; also gates compute volume delete |
-| `compute.shell` | **approve** | an interactive **root shell** inside the machine, with the service's decrypted env already in it — strictly stronger than `deploy` (which ships reviewed code) and than `compute exec` (one argv, no TTY, no interactive pivot). Gates `insta compute ssh`, paired with `secrets.read`. Approval is the **default**, so an existing branch-developer policy that predates the action does not silently grant it |
+| `compute.shell` | **approve** | an interactive **root shell** inside the machine, with the service's decrypted env already in it — strictly stronger than `deploy` (which ships reviewed code) and than `compute exec` (one argv, no TTY, no interactive pivot). Gates `insta compute ssh`, paired with `secrets.read`. Approval is the **default**, so an existing branch-specific policy that predates the action does not silently grant it |
 | `service.add`, `service.rename`, `branch.create` | allow | ordinary development |
 | `service.scale`, `service.upgrade`, `service.setAccess`, `project.update` | **approve** | capacity, public access and project settings |
 | `storage.read` | allow | listing a bucket, downloading, previewing |
@@ -32,6 +32,21 @@ The unprotected-branch defaults are:
 | `agent_policy.update`, `branch.protection.update`, project administration | **deny** | an agent cannot loosen its own restrictions |
 
 Decisions: `allow` (proceed) · `deny` (hard no) · `approve` (human in the loop).
+
+A fourth mode, `customize`, is `branch_specific` **carrying explicit rules** — the same
+authorization, with the mode recording that a human changed something. The three presets take no
+rules and `customize` requires at least one, so a preset can never be showing one thing while
+something else decides. An action `customize` does not name falls back to the `branch_specific`
+default in the table above, never to `allow`.
+
+`insta agent-policy get --json` returns an `actionCatalog`: every action, its group and label, and
+whether a rule may name it (`editable: false` for the fixed invariants — reads are always allowed,
+project administration always denied). **Read it before proposing a rule** rather than working
+from the table above, which is a summary and can lag the platform.
+
+Renamed 2026-09: `branch_developer` → `branch_specific`, `branchDeveloperRules` → `rules`. Platform
+still accepts the old names on write, and `insta agent-policy set branch-developer` still works, but
+new instructions should use the current ones.
 
 Compound requests (service PATCH, compute exec, template deploy) evaluate every action before any
 side effect: `deny > approve > allow`. One agent approval binds the complete action set, actor,
@@ -46,8 +61,11 @@ toolchains, not deliberate credential bypass.
 ```bash
 insta --agent agent-policy get --json
 # Human/admin configuration only — relay these commands; do not execute as an agent:
-insta agent-policy set branch-developer
+insta agent-policy set branch-specific
 insta agent-policy protect-branch main
+# Any rule change moves the policy to `customize`, snapshotting the preset first so that
+# setting one permission cannot quietly re-decide the others:
+insta agent-policy rule set deploy approve
 ```
 
 ## The approval flow (relay procedure — CRITICAL)
