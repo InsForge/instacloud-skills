@@ -40,14 +40,19 @@ deletes secrets and bindings scoped to it; unbound and project-wide secrets are 
 | --- | --- | --- |
 | postgres (each) | copy-on-write DB branch | **the parent's data**, isolated — writes never touch the parent |
 | storage (each) | copy-on-write bucket fork | **the parent's objects**, isolated |
-| compute (each group) | a fresh isolated app + URL per group | **infrastructure only — no code running yet (cloud)** |
+| compute (each group) | a fresh isolated app + URL per group | **the parent's image, already running** — `branch.ts` carries `image`/`port`/`always_on` onto the child and boots it with the branch's own secret bundle |
 | user secrets + compute credential bindings | parent's branch-scoped `secrets set` values and `secrets bind` rules | copied to the new branch with service ids remapped |
 
-Two consequences to internalize:
+Three consequences to internalize:
 
-- **Data clones; code re-materializes.** On the cloud, the clone's compute is an empty app until
-  you `insta --agent deploy --branch <name>` (insta-oss auto-redeploys the parent's image). Deploy is part
-  of the branch loop, not an afterthought.
+- **The clone serves before you deploy.** Its compute comes up on the **parent's image**, on the cloud
+  and on insta-oss alike (insta-oss redeploys it asleep), so a branch has a working URL from the start.
+  Deploy to the branch when you want the branch's *code*, not to make it serve at all.
+- **A literal secret still points at the parent.** User secrets are copied **ciphertext and all**, and only
+  the `service_id` is remapped (`branch.ts`); `secrets bind` rules are remapped properly. So a value that is
+  itself a URL of a sibling service — `DENO_RUNTIME_URL`, `POSTGREST_BASE_URL`, anything you typed rather
+  than bound — still addresses **main's** service from inside the branch. Re-set those on the branch and
+  restart, or the branch quietly drives production.
 - A legacy project whose root bucket predates snapshots keeps one **shared** bucket — no storage
   isolation. `insta --agent manifest` shows what a branch really has.
 

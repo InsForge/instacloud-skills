@@ -283,10 +283,11 @@ insta --agent branch switch fix-urls        # REQUIRED: create alone leaves you 
 insta --agent status                        # confirm `branch fix-urls` before touching anything
 ```
 
-A branch's cloned compute services arrive empty and serve nothing until they are
-redeployed (`references/branching.md`), so deploy **both** of them on the branch, api and deno, and point the
-branch's api at the branch's own deno URL before you test. Deploying only the api leaves the function call with
-nowhere to go, and the isolation step fails before it can prove anything. Then work out the update against
+The branch's api and deno come up already running the parent's image (`references/branching.md`), so there is
+nothing to deploy to make them serve. **What does not follow is `DENO_RUNTIME_URL`**: it is a literal secret
+value, copied verbatim, so the branch's api still calls **main's** Deno host. Re-set it to the branch's own deno
+URL and `compute restart api` before you test, or the isolation step proves nothing because the call never
+entered the branch. Then work out the update against
 the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
 the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
 plaintext back. Only once that passes, repeat it on `main` with `--branch main`.
