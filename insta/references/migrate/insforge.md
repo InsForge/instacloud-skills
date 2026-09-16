@@ -350,11 +350,13 @@ measured and the sequence as reviewed.
      printf '%s' "$v" | insta --agent secrets set "${p##*:}" --service compute/api || exit 1   # with no pipefail
    done                                              # the status is `secrets set`'s, so CHECK it: an unchecked
                                                      # write scrolls past and the target keeps the wrong key.
-   # ROOT_ADMIN_* cannot be read from the source (point 2). Generate them HERE or the first deploy 502s with
-   # nothing serving. Hand them to the user out of band — do not echo either into the session transcript.
+   # ROOT_ADMIN_* cannot be read from the source (point 2), and without them the first deploy 502s with nothing
+   # serving. **The user picks the password; do not generate one.** They are the dashboard's only admin login and
+   # insta has no `secrets get` — `secrets list` returns names, not values — so anything minted here is gone the
+   # moment this shell exits. Take it from the environment, which keeps it out of argv the way the PG* vars below do.
+   [ -n "$ROOT_ADMIN_PASSWORD" ] || { echo 'ask the user to choose ROOT_ADMIN_PASSWORD and export it first: it cannot be read back later' >&2; exit 1; }
    printf 'admin' | insta --agent secrets set ROOT_ADMIN_USERNAME --service compute/api || exit 1
-   openssl rand -base64 24 | tr -d '\n' > "$work/rootpw"          # inside $work, so the trap removes it
-   insta --agent secrets set ROOT_ADMIN_PASSWORD --service compute/api < "$work/rootpw" || exit 1
+   printf '%s' "$ROOT_ADMIN_PASSWORD" | insta --agent secrets set ROOT_ADMIN_PASSWORD --service compute/api || exit 1
 
    # The CLI spells this key `connectionURL` (`outputJson({ connectionURL: url })`, cli 0.2.8). With
    # `.connectionString` the jq yields empty and the guard below stops every cloud migration dead.
@@ -385,7 +387,9 @@ measured and the sequence as reviewed.
    not six: there is no `ENCRYPTION_KEY` and no `ROOT_ADMIN_*` to read.
 2. **`ROOT_ADMIN_USERNAME` and `ROOT_ADMIN_PASSWORD` are not retrievable, and the backend refuses to boot without
    them.** They live only in the source's env (`auth.service.ts` compares against `process.env`) and are in no dump.
-   Generate new ones; nothing is lost, because they authenticate the dashboard's root admin and not any user row.
+   Have the **user** choose new ones; nothing is lost, because they authenticate the dashboard's root admin and not
+   any user row. Do not mint the password yourself: insta exposes no `secrets get`, so a generated value is
+   unrecoverable once the migration shell exits and the user is locked out of their own dashboard.
    **The failure is badly disguised:** a first deploy without them fails as
    `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
    serving at all. `insta --agent logs compute <svc>` carries the real line.
