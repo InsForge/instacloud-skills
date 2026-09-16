@@ -152,7 +152,8 @@ Three things to get right as an agent:
    account, so there is no contact to collect and no step before `search`.
 
 Payment registers the name and nothing else — **buying is not attaching**, so the domain sits as
-inventory until you say what it should serve. `domain attach myapp.com` binds `myapp.com` **and**
+inventory until you say what it should serve. The domain belongs to the **org**: any project in it
+can attach a hostname, and `domain list` shows the org's whole inventory. `domain attach myapp.com` binds `myapp.com` **and**
 `www.myapp.com`; the platform publishes the DNS in the zone it controls, so there are no records for
 you to add.
 
