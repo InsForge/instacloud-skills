@@ -54,7 +54,7 @@ the source**, and what that platform's apps assume about themselves. That part h
 | **Render** | `migrate/render.md` | `render.yaml` and the env-vars API, the `ALLOWED_HOSTS` 400, the blueprint field mapping |
 | **Railway** | `migrate/railway.md` | the project token, translating a project by hand, the volume caveat |
 | **Fly** | `migrate/fly.md` | `fly.toml` as the source of `--port`, and secrets that can only be read off a running machine |
-| **InsForge** (self-hosted) | `migrate/insforge.md` | standing the backend itself up: init SQL, the five provider credentials, the Deno host |
+| **InsForge** (self-hosted or Cloud) | `migrate/insforge.md` | standing the backend itself up: init SQL, the five provider credentials, the Deno host |
 
 **Read your source's file in addition to this one, never instead of it.** Everything those files say about steps,
 `$PG`, the writer barrier or the rollback boundary refers back to the cutover here. Heroku is the exception: its
@@ -738,23 +738,14 @@ what to provision.
 > included. The one step inside it that is **not** measured is the `system.secrets` re-encrypt that repoints
 > `INSFORGE_BASE_URL`.)
 >
-> **InsForge Cloud is deliberately out of scope**, and not for lack of trying: a cloud project was migrated
-> successfully on the same day, rows, users and keys intact. It is excluded because a cloud project's data
-> describes capabilities a self-hosted target does not have, and nothing in a dump says which of them that
-> project used. Edge functions restore as `functions.definitions` rows with no Deno host to run them; the
-> `deployments` and `compute` schemas point at cloud-managed resources; analytics answers 501; the AI gateway's
-> credentials were the cloud's. Every social login needs its OAuth client re-registered and its redirect URI
-> repointed, whoever owns the keys.
->
-> **One failure there is irreversible, but only for some providers** — a distinction worth getting right,
-> because it decides whether a project can be moved at all. Identities are keyed on
-> `provider` + `provider_account_id` (`000_create-base-tables.sql`), and that value is whatever the provider
-> calls the user: **Google** hands back `payload.sub` and **GitHub** its numeric user id, both stable for a
-> person no matter which OAuth client asks, so those identities survive a new client. **Apple** scopes its
-> `sub` to the developer *team*, so a new team yields a new id — the same human signs in and lands on a NEW
-> account while the old one is orphaned with its data, and no mapping exists to repair it. Treat
-> pairwise-identifier providers (Apple, and check Microsoft and LinkedIn before promising anything) as a hard
-> stop. **If asked to migrate a cloud project, say this rather than adapting the steps below.**
+> **InsForge Cloud is a supported source too**, measured on the same day: a real cloud project migrated with
+> every table row-for-row identical, keys byte-identical and no user forced to log in again. The seven things
+> that differ are in `migrate/insforge.md`, and two of them stay **unproven** and are marked there: a cloud
+> source that actually holds storage objects (the tested project held none, so the S3-gateway export is verified
+> on the target side only), and any source whose user schedules keep writing, because a cloud project cannot be
+> quiesced. A cloud source also arrives having lost what the control plane, not the container, provided: shared
+> OAuth keys, the managed OpenRouter and webscraper credentials, and analytics, whose history lives in InsForge's
+> PostHog rather than in the dump. **Enumerate that for the user before the cutover, not after.**
 >
 > **The pg18→pg16 downgrade in step 3 is verified end to end** against a seeded PG 18.6 source and a
 > real InstaCloud PG 16.15 target: restore exited 0 with empty stderr, and a catalog and data diff

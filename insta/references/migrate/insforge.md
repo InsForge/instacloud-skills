@@ -1,6 +1,8 @@
-**InsForge, self-hosted.** Read `../migrate.md` first: its ordered cutover is the procedure and this
-file is only what InsForge adds to it. InsForge Cloud is **not** a supported source; `../migrate.md`'s
-verification note says why. The source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
+**InsForge.** Read `../migrate.md` first: its ordered cutover is the procedure and this
+file is only what InsForge adds to it. **Both source shapes are supported.** The worked example is a
+self-hosted one; a hosted InsForge Cloud project runs the same sequence, and the **From InsForge Cloud** block at the
+end of this file is the whole delta. Read it **before** step 0, because that is where the two diverge.
+The self-hosted source is `docker compose` with four published images (`ghcr.io/insforge/postgres`,
 `postgrest/postgrest`, `ghcr.io/insforge/insforge-oss`, `denoland/deno`), started by `deploy/setup.sh`; nothing is
 built. On insta the backend and PostgREST run **unchanged** as two compute services from the same images, the
 database becomes a managed postgres, and files move to a storage service. **Measured end to end on staging, twice,
@@ -314,3 +316,177 @@ proved the stack on a first database and you restore into a fresh one, rebind **
 `PGRST_DB_URI` (postgrest) and re-set the five `POSTGRES_*` — the `$PG` trap applies here twice. Two small
 measured annoyances: InsForge admin tokens expire after 900 s (`"Invalid token"` on reuse), and PostgREST's schema
 cache lags a `CREATE TABLE` by about a second (first insert 404, then 201).
+
+---
+
+**From InsForge Cloud.** The shape above holds and seven things change. **The migration is measured, on
+2026-09-14** against a real cloud project (backend 2.2.6, PG 15.18 → insta pg 16): every table row-for-row
+identical, users, migrations and `system.secrets` counts equal, anon reads 200 through both the InsForge API and
+PostgREST. **The commands are a transcription of that run, not a recording of it**, and re-checking them against
+`@insforge/cli` 0.2.8 found three that cannot run as written: a `connectionString` key that the CLI spells
+`connectionURL`, `.data`-wrapped S3 fields that are flat, and a line continuation killed by a trailing comment,
+which silently dropped `AWS_ACCESS_KEY_ID` (reproduced). They are corrected below against the CLI's own output
+shapes, and **the corrected forms have not been re-executed against a cloud project.** Read the outcome as
+measured and the sequence as reviewed.
+
+1. **There is no `.env` and no container — the backend serves the migration inputs.** `secrets get <KEY>` returns
+   `JWT_SECRET`, `ANON_KEY`, `API_KEY` and `JWT_PRIVATE_KEY`; `db connection-string` (cloud only) returns the DSN
+   for a host `pg_dump` over TLS. **Both print the credential to stdout, so neither may be run bare** — the rule
+   `../migrate.md` sets for every credential applies here: pipe each value straight into its destination, and
+   capture the DSN into a mode-600 file you never `cat`:
+
+   ```bash
+   umask 077                                         # everything written below is 600
+   ifc() { npx -y @insforge/cli --json "$@"; }
+   work="$(mktemp -d)"; key_id=""                    # ONE trap for the whole path: the DSN, the derived libpq
+   cleanup() {                                       # env and the minted S3 key must not outlive this shell,
+     [ -n "$key_id" ] && ifc storage s3-keys delete "$key_id" >/dev/null 2>&1   # on success OR on any exit.
+     rm -rf "$work"
+   }
+   trap cleanup EXIT INT TERM                        # set BEFORE anything sensitive exists, not after
+   for p in JWT_SECRET:JWT_SECRET API_KEY:ACCESS_API_KEY ANON_KEY:ACCESS_ANON_KEY; do
+     v="$(ifc secrets get "${p%%:*}" | jq -r '.value // empty')"   # `// empty` prints NOTHING for a missing key.
+     [ -n "$v" ] || { echo "source returned no ${p%%:*}" >&2; exit 1; }   # `jq -e` would still print `null`, and
+     printf '%s' "$v" | insta --agent secrets set "${p##*:}" --service compute/api || exit 1   # with no pipefail
+   done                                              # the status is `secrets set`'s, so CHECK it: an unchecked
+                                                     # write scrolls past and the target keeps the wrong key.
+   # ROOT_ADMIN_* cannot be read from the source (point 2), and without them the first deploy 502s with nothing
+   # serving. **The user picks the password; do not generate one.** They are the dashboard's only admin login and
+   # insta has no `secrets get` — `secrets list` returns names, not values — so anything minted here is gone the
+   # moment this shell exits. Take it from the environment, which keeps it out of argv the way the PG* vars below do.
+   [ -n "$ROOT_ADMIN_PASSWORD" ] || { echo 'ask the user to choose ROOT_ADMIN_PASSWORD and export it first: it cannot be read back later' >&2; exit 1; }
+   printf 'admin' | insta --agent secrets set ROOT_ADMIN_USERNAME --service compute/api || exit 1
+   printf '%s' "$ROOT_ADMIN_PASSWORD" | insta --agent secrets set ROOT_ADMIN_PASSWORD --service compute/api || exit 1
+
+   # The CLI spells this key `connectionURL` (`outputJson({ connectionURL: url })`, cli 0.2.8). With
+   # `.connectionString` the jq yields empty and the guard below stops every cloud migration dead.
+   ifc db connection-string | jq -r '.connectionURL // empty' > "$work/src.dsn"
+   [ -s "$work/src.dsn" ] || { echo 'no connection string — is this a cloud project, and is its backend up?' >&2; exit 1; }
+
+   # libpq env, never argv: `psql "$(cat src.dsn)"` expands BEFORE psql runs, so the DSN lands in the command line
+   # where `ps` shows it to every local user. PGHOST/PGPASSWORD/… do not appear there.
+   python3 - "$work/src.dsn" > "$work/src.pgenv" <<'PY2'
+   import sys, shlex, urllib.parse as u
+   d = u.urlsplit(open(sys.argv[1]).read().strip()); q = dict(u.parse_qsl(d.query))
+   for k, v in (("PGHOST", d.hostname), ("PGPORT", d.port or 5432), ("PGDATABASE", (d.path or "/").lstrip("/")),
+                ("PGUSER", u.unquote(d.username or "")), ("PGPASSWORD", u.unquote(d.password or "")),
+                ("PGSSLMODE", q.get("sslmode", "require"))):
+       print(f"export {k}={shlex.quote(str(v))}")
+   PY2
+   . "$work/src.pgenv"                               # psql and pg_dump below take NO connection argument
+   SRC() { psql -X "$@"; }                           # …and neither does the dump: `pg_dump > dump-raw.sql`
+   ```
+
+   **`ENCRYPTION_KEY` is absent on cloud, and must stay absent** — measured,
+   `sha256(current_setting('app.encryption_key'))` equals `sha256(JWT_SECRET)`, i.e. the cloud runs on the
+   documented fallback, so carrying `JWT_SECRET` alone is sufficient. It is sufficient in the strong sense: on the
+   target `ANON_KEY`, `API_KEY`, `JWT_PRIVATE_KEY` and `JWT_KEY_ID` all came back **byte-identical**, and a fresh
+   login minted RS256 under the *source's* `kid` — **no user has to log in again**. Everything is gated on that one
+   HTTP surface, so `curl -fsS <host>/api/health` must be 200 before you start; if it is not, the migration cannot
+   begin and only the project's owner can fix it. The secret loop in step 2 above therefore sets three names here,
+   not six: there is no `ENCRYPTION_KEY` and no `ROOT_ADMIN_*` to read.
+2. **`ROOT_ADMIN_USERNAME` and `ROOT_ADMIN_PASSWORD` are not retrievable, and the backend refuses to boot without
+   them.** They live only in the source's env (`auth.service.ts` compares against `process.env`) and are in no dump.
+   Have the **user** choose new ones; nothing is lost, because they authenticate the dashboard's root admin and not
+   any user row. Do not mint the password yourself: insta exposes no `secrets get`, so a generated value is
+   unrecoverable once the migration shell exits and the user is locked out of their own dashboard.
+   **The failure is badly disguised:** a first deploy without them fails as
+   `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
+   serving at all. `insta --agent logs compute <svc>` carries the real line.
+3. **The files come out over the S3 gateway — there is no volume to copy.** Skipping this is the one way to
+   produce a migration that looks clean and is not: the dump carries `storage.buckets` and `storage.objects`, so a
+   target restored without the bytes lists every file and serves none. InsForge Storage speaks S3 at
+   `https://<app-key>.<region>.insforge.app/storage/v1/s3` (2.0.9+, **path-style only**, cloud only). Minting a key
+   there is **the one write this path makes on the source**; delete it when you are done.
+
+   ```bash
+   # Same shell as the block above: `$work`, `key_id` and the EXIT/INT/TERM trap that revokes the key are already
+   # in place. Assigning key_id is what arms the revoke, so it comes immediately after the create.
+   ifc storage s3-keys create --description migration > "$work/src-s3.json"   # secret shown ONCE
+   key_id="$(jq -r '.id // empty' "$work/src-s3.json")"
+   [ -n "$key_id" ] || { echo 'no id in the s3-keys response — cannot guarantee revocation' >&2; exit 1; }
+   SRC_EP="https://<app-key>.<region>.insforge.app/storage/v1/s3"
+   src_n="$(SRC -Atc 'select count(*) from storage.objects')"           # count BEFORE, from the source itself
+   # `--json` gives a bare array on some versions and {"buckets": …} on others; the CLI itself accepts both.
+   for b in $(ifc storage buckets | jq -r '(.buckets // .)[].name'); do
+     # NOTHING may follow the `\`. A backslash before a space escapes the SPACE, not the newline, so a trailing
+     # comment ends the command early and `aws` runs with AWS_ACCESS_KEY_ID unset (reproduced, not theorised).
+     AWS_ACCESS_KEY_ID="$(jq -r .accessKeyId "$work/src-s3.json")" \
+     AWS_SECRET_ACCESS_KEY="$(jq -r .secretAccessKey "$work/src-s3.json")" \
+       aws s3 sync "s3://$b/" "./storage-data/$b/" --endpoint-url "$SRC_EP" || exit 1
+   done
+   [ "$(find ./storage-data -type f | wc -l | tr -d ' ')" = "$src_n" ] \
+     || { echo "downloaded $(find ./storage-data -type f | wc -l) of $src_n objects — do NOT dump" >&2; exit 1; }
+   ```
+
+   The gateway is path-style only, and a custom `--endpoint-url` already addresses that way: measured on
+   aws-cli 2.34.16 against a local listener, `s3://mybucket` went out as `Host: <endpoint>` and path `/mybucket`,
+   with `AWS_S3_ADDRESSING_STYLE=path` making no difference (it is not a botocore variable). Nothing to set, but if
+   a future client regresses, the documented knob is `aws configure set default.s3.addressing_style path`.
+
+   Then upload with the same `aws s3 sync … s3://$S3_BUCKET/local/` that step 3 of the sequence above uses, and
+   re-check the count on the target before moving on. **Both checks are fail-closed on purpose:** `aws s3 sync`
+   exits 0 on an empty source, and so does a restore of metadata with no bytes behind it. Measured only in part —
+   the cloud project tested had **no objects**, so the gateway path above is derived from InsForge's own S3
+   documentation and verified on the target side only. Treat a cloud source that holds objects as **unproven**: run
+   the two counts, and stop if they disagree.
+4. **You cannot quiesce a cloud source, so read the exposure and be willing to stop.** There is no
+   `compose stop`, no project pause, and deactivating `cron.job` would itself be a write on someone's production
+   database, so step 0's barrier above has no equivalent here. Count the exposure through the DSN **before either
+   snapshot**:
+
+   ```bash
+   SRC -Atc "select count(*) from cron.job where active and jobname not like 'insforge_%'" \
+     | { read -r n; [ "$n" = 0 ] || { echo "$n active user schedule(s): this source cannot be snapshotted consistently" >&2; exit 1; }; }
+   ```
+
+   That is a **hard stop, not a warning**. A schedule that writes application rows fires between the file copy and
+   the dump and there is no way to hold it, so the result is a migration that reports zero errors and is wrong.
+   Either the owner disables those jobs on the source first, accepting that this is a write on their production
+   database, or the migration does not run. The measured source passed this check with 2 internal cleanup jobs and
+   no user schedules. With the check clear, freeze at the application level and keep the window short.
+5. **Read the `insforge.*` GUCs off the live source, not out of the repo.** They drift:
+   `select current_setting('insforge.internal_schemas', true)` on the measured source listed a schema the checked-in
+   `postgresql.conf` does not. `db query --unrestricted` is **disabled** on cloud projects and the restricted mode
+   denies the `cron` schema, so use the DSN for anything beyond ordinary reads.
+6. **Deploy the tag, not the version string.** The API reports `service_version` `2.2.6`; the image is
+   `ghcr.io/insforge/insforge-oss:v2.2.6` and the bare number 404s.
+7. **The migrated project stops being a cloud project, and InsForge itself behaves differently.**
+   `isCloudEnvironment()` (`backend/src/utils/environment.ts`) is true only when `AWS_INSTANCE_PROFILE_NAME` is
+   set, which it is not here — so the result is a **self-hosted InsForge holding cloud data**, and the routes that
+   branch on it flip. What the user LOSES, because the cloud control plane provided it and the container does not:
+   **shared OAuth keys** (`isOAuthSharedKeysAvailable()` is `isCloudEnvironment()`, and
+   `auth/oauth.routes.ts:114,166` refuses `useSharedKey` with `400 Shared OAuth keys are not enabled in this
+   environment`, so every social login needs its own client id and secret), the managed OpenRouter key behind the
+   AI gateway, the managed webscraper credentials, and **analytics**, which is cloud-only by construction:
+   `providers/analytics/posthog.provider.ts` answers
+   `501 PostHog integration is only available on Insforge Cloud, not in self-hosted mode.` and the history itself
+   lives in InsForge's PostHog, not in the dump. Usage and billing history stay with the old account. What it
+   GAINS: `/api/database/backups` and `/api/database/config`, which the backend mounts **only** under
+   `!isCloudEnvironment()` (`api/routes/database/index.routes.ts:26`, whose own comment says the cloud control
+   plane owns that scheduling). Enumerate this for the user **before** the cutover, not after.
+
+**Re-registering the OAuth clients costs most users nothing, and for one provider it depends on the source's
+cooperation.** Identities key on `provider` + `provider_account_id` (`000_create-base-tables.sql:106,112`), and
+that value is whatever the provider returns. **Google** hands back `payload.sub` and **GitHub** its numeric user
+id, both the same for a person whichever client asks, so those accounts survive a new client untouched — and those
+two are exactly the pair cloud seeds by default (`utils/seed.ts:80-87`, `useSharedKey: true`). **Apple** scopes its
+`sub` to the developer *team*, so a new team yields a new id: the same human signs in and lands on a NEW account
+while the old one keeps its data, and for a Hide My Email user the relay address is team-scoped too, so the two
+accounts share no field at all.
+
+**That is not automatically unfixable.** Apple documents a user migration for exactly this
+([TN3159](https://developer.apple.com/documentation/technotes/tn3159-migrating-sign-in-with-apple-users-for-an-app-transfer)):
+the *outgoing* team exchanges each `sub` for a transfer identifier, and after the app or Services ID moves, the
+receiving team exchanges those identifiers for its own `sub` and relay address — private relay users included. Two
+conditions decide whether it is available to you, and both are about the source, not about you. The transfer runs
+from the **source team's** credentials, so someone at InsForge has to run it. And it moves an app or Services ID
+between teams, which a Services ID shared across many customers' projects cannot do for one of them. So: a project
+that configured its **own** Apple client loses nothing, because the client does not change. A project on InsForge's
+**shared** Apple client needs InsForge to run TN3159, and only if that is refused or impossible is the loss real —
+at which point it is a hard stop worth raising before anything is copied, not an account merge you can build
+afterwards.
+
+Apple is never seeded, so it is present only if the project added it. **Run
+`select provider, use_shared_key from auth.oauth_configs` during the inventory** and say what you find; check
+Microsoft and LinkedIn yourself rather than assuming they behave like Google.
