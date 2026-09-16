@@ -134,7 +134,8 @@ The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an ape
 ```bash
 insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
 insta --agent domain buy myapp.com --no-open       # → a Stripe Checkout URL to relay
-insta --agent domain attach myapp.com              # once registered: bind it, and its www
+insta --agent domain status myapp.com              # poll until the order is registered
+insta --agent domain attach myapp.com              # bind it, and its www
 insta --agent domain status myapp.com              # poll until active
 ```
 
