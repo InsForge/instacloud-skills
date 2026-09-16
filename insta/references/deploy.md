@@ -129,11 +129,13 @@ insta --agent compute check-domain app.example.com                    # status o
 
 The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).
 
-**You want to buy one** — InstaCloud registers it for you and attaches it itself:
+**You want to buy one** — InstaCloud registers it and owns the zone; you say what it serves:
 
 ```bash
 insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
-insta --agent domain buy myapp.com --no-open        # → a Stripe Checkout URL to relay
+insta --agent domain buy myapp.com --no-open       # → a Stripe Checkout URL to relay
+insta --agent domain status myapp.com              # poll until the order is registered
+insta --agent domain attach myapp.com              # bind it, and its www
 insta --agent domain status myapp.com              # poll until active
 ```
 
@@ -150,10 +152,21 @@ Three things to get right as an agent:
 3. **Nobody is asked for a registrant contact.** InstaCloud registers under its own registrar
    account, so there is no contact to collect and no step before `search`.
 
-Afterwards the platform registers the name, publishes the DNS in the zone it controls, and attaches
-`myapp.com` **and** `www.myapp.com` to the compute service — no records for you to add. Delete that
-service and the domain goes `detached`: the registration stands, and
-`insta --agent domain attach myapp.com --group <service>` binds it somewhere else.
+Payment registers the name and nothing else — **buying is not attaching**, so the domain sits as
+inventory until you say what it should serve. The domain belongs to the **org**: any project in it
+can attach a hostname, and `domain list` shows the org's whole inventory. `domain attach myapp.com` binds `myapp.com` **and**
+`www.myapp.com`; the platform publishes the DNS in the zone it controls, so there are no records for
+you to add.
+
+Any subdomain works, and each one is its own call, so one name can serve several services:
+
+```bash
+insta --agent domain attach api.myapp.com  --group api    # only api.myapp.com moves
+insta --agent domain attach docs.myapp.com --group web    # docs.myapp.com joins it
+```
+
+Delete a service and only ITS hostnames go: the rest keep serving, and a domain left with nothing
+goes `detached` — the registration stands, and `domain attach` binds it somewhere else.
 
 ## Dockerfile templates → use the framework recipes
 
