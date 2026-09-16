@@ -129,12 +129,12 @@ insta --agent compute check-domain app.example.com                    # status o
 
 The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).
 
-**You want to buy one** — InstaCloud registers it for you and attaches it itself:
+**You want to buy one** — InstaCloud registers it and owns the zone; you say what it serves:
 
 ```bash
 insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
 insta --agent domain buy myapp.com --no-open       # → a Stripe Checkout URL to relay
-insta --agent domain attach myapp.com              # once paid: bind it, and its www
+insta --agent domain attach myapp.com              # once registered: bind it, and its www
 insta --agent domain status myapp.com              # poll until active
 ```
 
