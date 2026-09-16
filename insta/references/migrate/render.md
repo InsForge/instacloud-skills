@@ -33,7 +33,7 @@ command you already have:
 | `healthCheckPath` | not a knob here; insta health-checks the port |
 | `numInstances` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
 | `plan:` | `insta --agent compute limits` / `insta --agent db limits` |
-| `region:` | `--region` on `insta --agent services add` (values from `insta --agent regions`) |
+| `region:` | `--region` on `insta --agent services add` for a single service, or `--region` on `insta --agent template deploy` for a whole template (values from `insta --agent regions`) |
 | `autoDeploy: false` | nothing to do, and the default runs the other way for a **public** repo: `connect-repo --public` prints `deploys are manual from here: pushes will not redeploy (public repo)`, so nothing auto-deploys until you ask. `builds.auto_deploy` is not implemented on the compute plane either |
 
 **Check for platform-detection env vars before you deploy anything.** Apps routinely branch on

@@ -116,7 +116,7 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent agent-policy get/set` | `insta_agent_policy_get` / `insta_agent_policy_set` (admin-only; restricted agents cannot change policy) |
 | `insta --agent approvals list` | `insta_approvals_list`; approve/deny require a human terminal and are rejected through MCP |
 | storage browse/download/delete | `insta_storage_list` / `insta_storage_download_url` / `insta_storage_delete` (no upload yet) |
-| `insta --agent template list/info/deploy` | `insta_template_search` / `insta_template_get` / `insta_template_deploy` / `insta_template_deployment_status` |
+| `insta --agent template list/info/deploy` (`--region <r>` on `deploy` only) | `insta_template_search` / `insta_template_get` / `insta_template_deploy` (`region` parameter, slugs from `insta_regions`) / `insta_template_deployment_status` |
 | `insta --agent feedback` | `insta_feedback` (same fields; pass `projectId`/`branch` explicitly — see [cli-reference.md → Feedback](../cli-reference.md#feedback)) |
 
 ## Behavior that carries over from the CLI
