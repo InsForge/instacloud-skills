@@ -61,8 +61,8 @@ keys and raw request data must not be included in source control or approval rep
 | `insta --agent secrets` [`--branch <name>`] [`--service <compute/name>`] [`-o <file>`] [`--print`] [`--json`] | secret seam → write the branch's secrets to `./.env` (gated: `secrets.read`). Carries user-defined project/branch secrets **plus the branch's canonical provider credentials** — one `DATABASE_URL` / `REDIS_URL` / `AWS_*` set from the **primary** service of each type (see **Provider credentials** below). **`--service <compute/name>` (CLI ≥ 0.0.65)** answers with **one compute service's own** env instead of the branch-wide merge: that service's user secrets, the unbound ones, its explicit bindings, and the same canonical credentials. Needed when several services define the same name — see **Same-name variables** below |
 | `insta --agent secrets list` [`--branch <b>`] [`--json`] | secret names for the branch, **grouped by service** — each service's bound secrets, plus a branch-level "unbound" group and a project-wide group |
 | `insta --agent secrets tree` [`--json`] | the whole project as `project → branch → service → secrets` (names only) |
-| `insta --agent secrets set <NAME> [value] [--branch <b>] [--service <compute/name>] [--json]` | Set a user secret (project-wide by default; value from stdin if omitted). `--service` scopes it to that branch's compute service (e.g. `compute/api`) — binding **requires a branch** (defaults to the current branch when `--service` is given); omit `--service` for an unbound secret (as before). **Redeploys every compute service that receives this secret as part of the same command** — a stopped one is **started** by that redeploy (billed) |
-| `insta --agent secrets unset <NAME> [--branch <b>] [--service <compute/name>] [--json]` | Remove a user secret. **`--service` (CLI ≥ 0.0.65)** removes **only that service's copy**, leaving a sibling's same-name value alone; without it the original name-keyed delete removes every matching copy at the scope. **Redeploys every compute service that received this secret as part of the same command** — a stopped one is **started** by that redeploy (billed) |
+| `insta --agent secrets set <NAME> [value] [--branch <b>] [--service <compute/name>] [--json]` | Set a user secret (project-wide by default; value from stdin if omitted). `--service` scopes it to that branch's compute service (e.g. `compute/api`) — binding **requires a branch** (defaults to the current branch when `--service` is given); omit `--service` for an unbound secret (as before). **Applies it, not just stores it**: the same command redeploys the compute services **on the target branch** that receive this secret — a stopped one is **started** by that redeploy (billed). The write scope and the deploy scope differ: a project-wide secret is *written* to every branch but *deployed* only on the branch this command targets (`--branch`, else the linked branch). Services on other branches print as `(other-branch)` and keep serving the old value until their own deploy or `compute restart` |
+| `insta --agent secrets unset <NAME> [--branch <b>] [--service <compute/name>] [--json]` | Remove a user secret. **`--service` (CLI ≥ 0.0.65)** removes **only that service's copy**, leaving a sibling's same-name value alone; without it the original name-keyed delete removes every matching copy at the scope. **Applies it, not just stores it**: the same command redeploys the compute services **on the target branch** that received this secret — a stopped one is **started** by that redeploy (billed). Same scope split as `set`: a project-wide removal lands on every branch but redeploys only the target branch's services |
 | `insta --agent secrets sources` [`--branch <b>`] [`--json`] | List provider credential sources available for explicit compute binding, e.g. `postgres/db: DATABASE_URL` or `redis/cache: REDIS_URL, ...` (names only; gated: `secrets.read`) |
 | `insta --agent secrets bind <ENV_NAME> <source>` [`--source-name <name>`] `--to <compute/name>` [`--branch <b>`] [`--json`] | Bind one provider credential from `<source>` (`postgres/db`, `redis/cache`, `mysql/orders`, `mongodb/catalog`, `storage/assets`, …) into a compute service's runtime env var. `--source-name` is required when the source exposes multiple credential names. Takes effect on the next deploy — or immediately on a running service with `insta --agent compute restart` (CLI ≥ 0.0.51) (gated: `secrets.write`) |
 | `insta --agent secrets bindings --target <compute/name>` [`--branch <b>`] [`--json`] | List provider credential bindings for one compute service (names only; gated: `secrets.read`) |
@@ -181,13 +181,22 @@ idle machine may take the config without waking — see the `insta --agent compu
 `insta --agent secrets set <NAME>` / `unset <NAME>` manage **user-defined** secrets. A user secret cannot
 collide with a provider credential binding visible to the same compute service. Gated:
 `secrets.write`. The new value is visible on the next `insta --agent secrets` fetch immediately, and
-the same command also **redeploys every compute service that receives the secret** — `set`/`unset`
-route through the platform's apply step, so a running machine picks the change up without a
-separate `insta --agent compute restart`. A stopped service that receives the secret is **started**
+the same command also **applies** it: `set`/`unset` route through the platform's apply step, which
+redeploys the compute services that receive the secret, so a running machine picks the change up
+without a separate `insta --agent compute restart`. A stopped service that receives it is **started**
 by that redeploy (ordinary billed uptime from then on), and the command reports **per service** what
 happened. There is still no hot reload: applying a value means replacing the machine, so a redeploy
 is the mechanism — it now just happens automatically as part of `set`/`unset` instead of waiting for
-a deploy or a manual restart. `--service` on `secrets set` scopes a user-defined secret to a branch
+a deploy or a manual restart.
+
+**Where the value is written and where a machine restarts are two different scopes.** A `secrets set`
+with no `--branch` and no `--service` is written **project-wide** — every branch sees the new value —
+but one batch **deploys on exactly one branch**: the one `--branch` names, or the linked branch.
+Compute services on every *other* branch hold the new value while still running the old one. They are
+listed in the command's own output as `= <service> (other-branch)`, the command still exits 0, and
+they pick the value up on their next deploy or on `insta --agent compute restart --branch <name>`.
+So "project-wide" says where the value landed, never where a machine restarted — do not read a clean
+exit as "every branch is live". `--service` on `secrets set` scopes a user-defined secret to a branch
 compute service; it is separate from provider credential binding (`secrets bind`), which is
 **unchanged** — a binding still takes effect only on its own deploy or `compute restart` (see
 **Provider credentials** above). `secrets list`, `secrets tree`, `services secrets`, `secrets
