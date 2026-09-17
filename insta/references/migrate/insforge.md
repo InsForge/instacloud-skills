@@ -284,10 +284,31 @@ insta --agent status                        # confirm `branch fix-urls` before t
 ```
 
 The branch's api and deno come up already running the parent's image (`references/branching.md`), so there is
-nothing to deploy to make them serve. **What does not follow is `DENO_RUNTIME_URL`**: it is a literal secret
-value, copied verbatim, so the branch's api still calls **main's** Deno host. Re-set it to the branch's own deno
-URL and `compute restart api` before you test, or the isolation step proves nothing because the call never
-entered the branch. Then work out the update against
+nothing to deploy to make them serve. **What does not follow is any value you set by hand.** `secrets bind` rules
+are remapped to the branch's services; a `secrets set` value is copied verbatim. Step 2 above creates a lot of the
+second kind, and on the branch every one of them still addresses **main**:
+
+| still points at main | where | remapped? |
+| --- | --- | --- |
+| `POSTGRES_HOST` `PORT` `DB` `USER` `PASSWORD` | compute/api **and** compute/deno | no — literals, split from the DSN by hand |
+| `POSTGREST_BASE_URL` | compute/api, compute/deno | no |
+| `DENO_RUNTIME_URL` | compute/api | no |
+| `DATABASE_URL`, `PGRST_DB_URI` | api, postgrest | **yes** — these two are bindings |
+
+**Re-point all of them and restart both services before you touch anything.** Left alone, this step does the exact
+opposite of its purpose: the backend's runtime reads the five `POSTGRES_*`, not `DATABASE_URL`, so a "branch test"
+writes the ciphertext into **main's** `system.secrets` against **main's** database. Take the branch's own DSN from
+`insta --agent db url --branch fix-urls --group "$PG"`, split it the same way step 2 does, set the five on both
+services and the two URLs on api, then start or restart each one (`compute start` first if it is asleep, which it
+is on insta-oss).
+
+**Prove it before the write, not after**: the host in the branch api's `POSTGRES_HOST` must equal the host in the
+branch's DSN, and must differ from main's.
+
+```bash
+insta --agent secrets --print --json --service compute/api --branch fix-urls | jq -r .POSTGRES_HOST
+insta --agent db url --branch fix-urls --group "$PG" | sed -E 's#^([a-z+]+://)[^@]*@#\1***@#'
+``` Then work out the update against
 the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
 the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
 plaintext back. Only once that passes, repeat it on `main` with `--branch main`.
