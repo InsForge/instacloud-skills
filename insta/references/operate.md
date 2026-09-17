@@ -269,5 +269,5 @@ isn't "done" until `manifest`/`events` reflect it.
 | metrics / logs | served (compute full, db limited) | 501 today (docker-stats planned) |
 | source deploy (`deploy <dir>`) | ✅ remote build | not yet — use `--image` |
 | services add postgres/storage | ✅ (≤5 each) | 501 — one of each, auto-provisioned |
-| branch compute | fresh empty app — deploy to it | parent's image auto-redeployed |
+| branch compute | parent's image, already running | parent's image, redeployed asleep |
 | branch app URL | own subdomain | host port +1000 |
