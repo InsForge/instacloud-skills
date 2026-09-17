@@ -77,11 +77,16 @@ insta --agent deploy . --group app --port 8080
 If the source has a single credential (`postgres`), `--source-name` is optional. Sources with several
 credential names (`storage`, `redis`, `mysql`, `mongodb`) need `--source-name`. Production code reads
 `process.env`; **never bake `./.env` into the image** (it is the local-dev seam, and it carries
-live provider credentials). Changing a
-secret or binding takes effect on the **next deploy**, or on **`insta --agent compute restart`** (CLI ≥
-0.0.51) for a service already running — no hot reload in either case: the machine takes a new config
-and restarts on it, in place. Whether an *idle* machine is woken to do so depends on the compute
-provider; see [operate.md](operate.md) before treating a restart as proof the app came back.
+live provider credentials). A changed
+**binding** takes effect on the **next deploy**, or on **`insta --agent compute restart`** (CLI ≥
+0.0.51) for a service already running. A changed **user secret** needs neither **on CLI ≥ 0.0.78**:
+`insta --agent secrets set`/`unset` redeploy the compute services that receive the value as part of
+the same command, on the branch they target — do not follow one with a restart, it is a second
+billable rollout. On an older build they only store the value and the restart is still required; the
+applying build is the one that prints a per-service line (`~ … redeployed`) after the set. Either way
+there is no hot reload: the machine takes a new config and restarts on it, in place. Whether an
+*idle* machine is woken to do so depends on the compute provider; see [operate.md](operate.md) before
+treating a restart as proof the app came back.
 
 Provider credential **values** reach two places by different routes. The local seam
 (`insta --agent secrets` / `insta --agent run`) carries user-defined secrets **plus** each type's
