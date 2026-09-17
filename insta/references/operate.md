@@ -139,9 +139,12 @@ bundle. Reach for it in exactly two situations:
 1. **A binding changed and the running app hasn't picked it up.** `insta --agent secrets bind` and
    `insta --agent secrets unbind` change what the app *would* receive, not what the running machine
    holds — env is baked into the machine at deploy time. `restart` is how that change lands without
-   shipping a new version. **`insta --agent secrets set`/`unset` are not in this list any more:** they
-   redeploy the compute services that receive the value themselves, as part of the same command, so
-   following one with a `restart` buys nothing and bills a second rollout.
+   shipping a new version. **`insta --agent secrets set`/`unset` are not in this list any more, on
+   CLI ≥ 0.0.78:** they redeploy the compute services that receive the value themselves, as part of
+   the same command, so following one with a `restart` buys nothing and bills a second rollout. On an
+   OLDER build they still only store the value and a `restart` is still required — tell the two apart
+   by whether the command printed a per-service line (`~ … redeployed`), not by assuming the version:
+   `autoupdate off` / `INSTA_NO_AUTOUPDATE=1` mean an agent can sit on an old build indefinitely.
 2. **The machine is up but wedged.** A crash-looped or hung process is still `started`, so
    `insta --agent compute start` is a no-op on it — it only flips desired state and wakes a machine that is
    *down*. `restart` cycles it.

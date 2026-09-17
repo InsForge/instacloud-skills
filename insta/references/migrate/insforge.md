@@ -168,7 +168,8 @@ insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from servi
                                           # prints `= compute/api (no-image)`: nothing is deployed there YET, not a failure
 insta --agent deploy --image ghcr.io/insforge/insforge-oss:<v> --port 7130 --group api   # boots, `migrate:up` finds the ledger complete
 insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/api   # + VITE_API_BASE_URL, same value
-                                          # `secrets set --service` redeploys compute/api itself — no restart after it
+                                          # CLI >= 0.0.78: `secrets set --service` redeploys compute/api itself.
+                                          # On an older build add: insta --agent compute restart api
 ```
 
 **One more thing to tell the user before the cutover:** the target inherits the source's auth
@@ -249,7 +250,8 @@ done                       # each prints `= compute/deno (no-image)` until the d
 
 insta --agent deploy . --port 7133 --group deno           # still inside deno-build
 printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
-                          # redeploys compute/api itself; the backend then proxies /functions/:slug to that URL
+                          # CLI >= 0.0.78: redeploys compute/api itself, and the backend then proxies
+                          # /functions/:slug to that URL. On an older build add: insta --agent compute restart api
 ```
 
 Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with

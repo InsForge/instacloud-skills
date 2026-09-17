@@ -79,9 +79,11 @@ credential names (`storage`, `redis`, `mysql`, `mongodb`) need `--source-name`. 
 `process.env`; **never bake `./.env` into the image** (it is the local-dev seam, and it carries
 live provider credentials). A changed
 **binding** takes effect on the **next deploy**, or on **`insta --agent compute restart`** (CLI ≥
-0.0.51) for a service already running. A changed **user secret** needs neither: `insta --agent secrets
-set`/`unset` redeploy the compute services that receive the value as part of the same command, on the
-branch they target — do not follow one with a restart, it is a second billable rollout. Either way
+0.0.51) for a service already running. A changed **user secret** needs neither **on CLI ≥ 0.0.78**:
+`insta --agent secrets set`/`unset` redeploy the compute services that receive the value as part of
+the same command, on the branch they target — do not follow one with a restart, it is a second
+billable rollout. On an older build they only store the value and the restart is still required; the
+applying build is the one that prints a per-service line (`~ … redeployed`) after the set. Either way
 there is no hot reload: the machine takes a new config and restarts on it, in place. Whether an
 *idle* machine is woken to do so depends on the compute provider; see [operate.md](operate.md) before
 treating a restart as proof the app came back.

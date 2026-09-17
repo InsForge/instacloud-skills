@@ -635,7 +635,8 @@ insta --agent services list                                   # the compute row'
 # NOTE: this is PROJECT-WIDE, not per-service (`set RENDER_EXTERNAL_HOSTNAME (project-wide)`).
 # Two compute services needing different hostnames need `--service compute/<name>`.
 insta --agent secrets set RENDER_EXTERNAL_HOSTNAME <that host>   # ONLY if that is the name AND shape it reads
-                                                # this redeploys the branch's compute itself — no restart after it
+                                                # CLI >= 0.0.78: this redeploys the branch's compute itself.
+                                                # On an older build add: insta --agent compute restart <service>
 ```
 
 **Match the name *and the shape*.** The pre-flight told you which variable; it also has to tell you
