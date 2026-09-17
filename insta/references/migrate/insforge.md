@@ -165,9 +165,10 @@ psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # th
 # 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
 insta --agent deploy --image postgrest/postgrest:v12.2.12 --port 3000 --group postgrest
 insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from services list>" --service compute/api
+                                          # prints `= compute/api (no-image)`: nothing is deployed there YET, not a failure
 insta --agent deploy --image ghcr.io/insforge/insforge-oss:<v> --port 7130 --group api   # boots, `migrate:up` finds the ledger complete
 insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/api   # + VITE_API_BASE_URL, same value
-insta --agent compute restart api
+                                          # `secrets set --service` redeploys compute/api itself — no restart after it
 ```
 
 **One more thing to tell the user before the cutover:** the target inherits the source's auth
@@ -244,11 +245,11 @@ enc="$(jq -r '.ENCRYPTION_KEY // empty' "$API_ENV")"
 [ -z "$enc" ] || printf '%s' "$enc" | insta --agent secrets set ENCRYPTION_KEY --service compute/deno
 for kv in PORT=7133 DENO_ENV=production WORKER_TIMEOUT_MS=60000; do   # DENO_DIR comes from the image
   printf '%s' "${kv#*=}" | insta --agent secrets set "${kv%%=*}" --service compute/deno
-done
+done                       # each prints `= compute/deno (no-image)` until the deploy below — expected, not a failure
 
 insta --agent deploy . --port 7133 --group deno           # still inside deno-build
 printf '%s' "https://<deno host>" | insta --agent secrets set DENO_RUNTIME_URL --service compute/api
-insta --agent compute restart api                         # the backend proxies /functions/:slug to that URL
+                          # redeploys compute/api itself; the backend then proxies /functions/:slug to that URL
 ```
 
 Three measured details. **`ENCRYPTION_KEY` is required, not optional**: the host decrypts function secrets with
