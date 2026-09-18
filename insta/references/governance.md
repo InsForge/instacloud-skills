@@ -1,9 +1,9 @@
 # Governance & audit
 
-`agent-policy` is the sole governance policy. Human requests use normal RBAC; old policy rules
+`agent policy` is the sole governance policy. Human requests use normal RBAC; old policy rules
 are archived and no longer enforced. Use `insta --agent` for managed project operations. Platform verifies the logged-in user plus the
 local agent session, then applies project agent policy. MCP calls carry server-signed assertions
-and use the same policy. Missing or invalid agent evidence fails closed; run `insta --agent setup agent`
+and use the same policy. Missing or invalid agent evidence fails closed; run `insta --agent agent setup`
 to refresh the linked directory's session, never retry as human.
 
 ## The gates
@@ -17,7 +17,7 @@ The unprotected-branch defaults are:
 | Action | Default | Guards |
 | --- | --- | --- |
 | `project.delete` | **deny** | destroying every resource |
-| `secrets.read` | allow | plaintext bundle reads — user secrets **and** each type's primary service credentials (`insta --agent secrets` / `insta --agent run`) — the postgres DSN (`insta --agent db url` / `insta --agent db connect`), and names-only binding/source views; also gates `compute exec`, paired with `deploy` |
+| `secrets.read` | allow | plaintext bundle reads — user secrets **and** each type's primary service credentials (`insta --agent secrets` / `insta --agent run`) — the postgres DSN (`insta --agent postgres url` / `insta --agent postgres connect`), and names-only binding/source views; also gates `compute exec`, paired with `deploy` |
 | `secrets.write` | allow | user-secret changes and provider credential bind/unbind |
 | `deploy` | allow | code reaching compute (and the build-token mint); also gates `compute restart` (which lands configuration through the same path) and `compute exec`, the latter paired with `secrets.read` |
 | `branch.delete` | **approve** | tearing down an environment |
@@ -39,13 +39,13 @@ rules and `customize` requires at least one, so a preset can never be showing on
 something else decides. An action `customize` does not name falls back to the `branch_specific`
 default in the table above, never to `allow`.
 
-`insta agent-policy get --json` returns an `actionCatalog`: every action, its group and label, and
+`insta agent policy get --json` returns an `actionCatalog`: every action, its group and label, and
 whether a rule may name it (`editable: false` for the fixed invariants — reads are always allowed,
 project administration always denied). **Read it before proposing a rule** rather than working
 from the table above, which is a summary and can lag the platform.
 
 Renamed 2026-09: `branch_developer` → `branch_specific`, `branchDeveloperRules` → `rules`. Platform
-still accepts the old names on write, and `insta agent-policy set branch-developer` still works, but
+still accepts the old names on write, and `insta agent policy set branch-developer` still works, but
 new instructions should use the current ones.
 
 Compound requests (service PATCH, compute exec, template deploy) evaluate every action before any
@@ -59,13 +59,13 @@ user credentials and unrestricted shell can issue unmarked HTTP; this version go
 toolchains, not deliberate credential bypass.
 
 ```bash
-insta --agent agent-policy get --json
+insta --agent agent policy get --json
 # Human/admin configuration only — relay these commands; do not execute as an agent:
-insta agent-policy set branch-specific
-insta agent-policy protect-branch main
+insta agent policy set branch-specific
+insta agent policy protect-branch main
 # Any rule change moves the policy to `customize`, snapshotting the preset first so that
 # setting one permission cannot quietly re-decide the others:
-insta agent-policy rule set deploy approve
+insta agent policy rule set deploy approve
 ```
 
 ## The approval flow (relay procedure — CRITICAL)
@@ -73,10 +73,10 @@ insta agent-policy rule set deploy approve
 A gated action returns **"approval required" + an approval id** (HTTP 202; the action did NOT run):
 
 1. **Relay to the human immediately and verbatim**: the exact line, e.g.
-   `insta approvals approve 7c3c9b68-…` in a human terminal. This approves one exact request;
-   `--always` is no longer supported. Lasting changes require explicit `agent-policy` configuration.
+   `insta agent approvals approve 7c3c9b68-…` in a human terminal. This approves one exact request;
+   `--always` is no longer supported. Lasting changes require explicit `agent policy` configuration.
    Don't summarize it away, don't retry in a loop, don't report failure without surfacing it.
-2. Only a **human admin** can approve (`insta --agent approvals list --status pending --json`
+2. Only a **human admin** can approve (`insta --agent agent approvals list --status pending --json`
    includes immutable request context). Agent CLI/MCP cannot approve their own requests.
 3. Grants are **single-use**: after approval, **re-run the unchanged original command**, with the
    same session and source mode. Changing the resource or parameters requires a new approval.
@@ -86,7 +86,7 @@ A gated action returns **"approval required" + an approval id** (HTTP 202; the a
 ## The audit timeline
 
 ```bash
-insta --agent events [--branch <b>] [--limit <n>] [--json]
+insta --agent agent events [--branch <b>] [--limit <n>] [--json]
 ```
 
 One per-project timeline containing: resource side-effects (creates, deploys + URLs, deletes),
@@ -100,7 +100,7 @@ Auto-installed on `project create`/`link` (PostToolUse hook for Claude Code / Co
 
 - Scans each tool call for credential exposure — AWS / GitHub / Stripe / LLM / DB URLs / JWTs /
   private keys — and appends **redacted fingerprints** (never raw secrets) to `./.insta/audit.jsonl`.
-- `insta --agent observe report [--json]` — review locally. `insta --agent observe sync` — upload findings into
+- `insta --agent agent observe report [--json]` — review locally. `insta --agent agent observe sync` — upload findings into
   the project timeline (idempotent, deduped).
 - Agent etiquette on top of the hook: treat `./.env` as the only credential source; never print
   secret values into chat, logs, code, or commits; if the report shows a leak finding, surface it
@@ -109,8 +109,8 @@ Auto-installed on `project create`/`link` (PostToolUse hook for Claude Code / Co
 ## Patterns for agents
 
 - **Before destructive work** (`project delete`, `branch delete` of someone else's branch): check
-  `insta --agent events` for recent activity and say what will be destroyed when relaying the approval.
+  `insta --agent agent events` for recent activity and say what will be destroyed when relaying the approval.
 - **Repeated gates:** explain the recurring action to the human; an admin may explicitly change an
-  eligible agent-policy rule. Never loosen policy just to get your own request through.
-- **After approval, verify:** the grant being consumed shows up in `insta --agent events` — confirm the
+  eligible `agent policy` rule. Never loosen policy just to get your own request through.
+- **After approval, verify:** the grant being consumed shows up in `insta --agent agent events` — confirm the
   re-run actually happened before reporting the task complete.

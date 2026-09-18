@@ -16,13 +16,13 @@ else that reads a `skills/` directory.
 The `insta` CLI installs this skill for you:
 
 ```bash
-insta --agent setup agent
+insta --agent agent setup
 ```
 
 That copies the skill user-globally for every coding agent on the machine and registers the
 InstaCloud MCP server. `insta --agent project create` and `insta --agent project link` additionally install
 the stack skills a project needs (Tigris, Better Auth) into the project
-itself, along with the `insta --agent observe` credential-audit hook — see
+itself, along with the `insta --agent agent observe` credential-audit hook — see
 [governance.md](insta/references/governance.md).
 
 To install the skill on its own:
@@ -69,8 +69,8 @@ InstaCloud runs two separate deployments, and each gets its own branch of this r
 | `prod` | `InsForge/insta-skills` (`main`) |
 | `staging` | `InsForge/insta-skills#devel` |
 
-`insta --agent setup agent` installs prod's skill text by default — bare `setup agent` always targets
-prod (CLI ≥ 0.0.38), switching a staging-leftover machine back. `insta --agent setup agent --env staging`
+`insta --agent agent setup` installs prod's skill text by default — bare `setup agent` always targets
+prod (CLI ≥ 0.0.38), switching a staging-leftover machine back. `insta --agent agent setup --env staging`
 is the explicit staging setup; it installs the `#devel` skill text that describes the staging
 control plane.
 

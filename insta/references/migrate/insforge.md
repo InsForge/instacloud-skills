@@ -75,13 +75,13 @@ src -c 'update cron.job set active = false' || exit 1   # and an empty file woul
 # (rolling back to the source means re-running that update with `= true where jobid in (…)` there as well)
 
 # services
-insta --agent services add postgres db
-insta --agent services add storage files
-insta --agent services add compute api --port 7130 --always-on --volume 10   # volume: logs, local-disk fallback
-insta --agent services add compute postgrest --port 3000 --always-on
+insta --agent service add postgres db
+insta --agent service add storage files
+insta --agent service add compute api --port 7130 --always-on --volume 10   # volume: logs, local-disk fallback
+insta --agent service add compute postgrest --port 3000 --always-on
 
 # 1. initialise the managed database the way InsForge's postgres image does on first boot
-PG="$(insta --agent db url --group db)"
+PG="$(insta --agent postgres url db)"
 psql "$PG" -X -v ON_ERROR_STOP=1 -f deploy/docker-init/db/db-init.sql     # roles anon/authenticated/project_admin,
                                                                            # grants, 2 event triggers: 15 stmts, 0 errors
 # jwt.sql says `ALTER DATABASE postgres SET …`. A managed instance HAS a database named postgres, so verbatim it
@@ -164,7 +164,7 @@ psql "$PG" -c "UPDATE cron.job SET database = current_database()"           # th
 
 # 5. deploy PostgREST, feed its URL to the backend, deploy the backend, tell it its own URL
 insta --agent deploy --image postgrest/postgrest:v12.2.12 --port 3000 --group postgrest
-insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from services list>" --service compute/api
+insta --agent secrets set POSTGREST_BASE_URL "https://<postgrest host from service list>" --service compute/api
                                           # prints `= compute/api (no-image)`: nothing is deployed there YET, not a failure
 insta --agent deploy --image ghcr.io/insforge/insforge-oss:<v> --port 7130 --group api   # boots, `migrate:up` finds the ledger complete
 insta --agent secrets set API_BASE_URL "https://<api host>" --service compute/api   # + VITE_API_BASE_URL, same value
@@ -222,7 +222,7 @@ CMD ["deno","run","--no-lock","--unstable-worker-options","--allow-net","--allow
 EOF
 insta --agent build .                                     # from INSIDE deno-build. Verdict must read
                                                           # `deployable`, not `needs-attention`
-insta --agent services add compute deno --port 7133 --always-on
+insta --agent service add compute deno --port 7133 --always-on
 
 # Secrets are per-service: nothing set on compute/api reaches compute/deno. Copy the ones it shares,
 # straight across, without either value passing through your terminal. **The trap is the load-bearing half**:
@@ -301,7 +301,7 @@ second kind, and on the branch every one of them still addresses **main**:
 **Re-point all of them and restart both services before you touch anything.** Left alone, this step does the exact
 opposite of its purpose: the backend's runtime reads the five `POSTGRES_*`, not `DATABASE_URL`, so a "branch test"
 writes the ciphertext into **main's** `system.secrets` against **main's** database. Take the branch's own DSN from
-`insta --agent db url --branch fix-urls --group "$PG"`, split it the same way step 2 does, set the five on both
+`insta --agent postgres url "$PG" --branch fix-urls`, split it the same way step 2 does, set the five on both
 services and the two URLs on api, then start or restart each one (`compute start` first if it is asleep, which it
 is on insta-oss).
 
@@ -310,7 +310,7 @@ branch's DSN, and must differ from main's.
 
 ```bash
 insta --agent secrets --print --json --service compute/api --branch fix-urls | jq -r .POSTGRES_HOST
-insta --agent db url --branch fix-urls --group "$PG" | sed -E 's#^([a-z+]+://)[^@]*@#\1***@#'
+insta --agent postgres url "$PG" --branch fix-urls | sed -E 's#^([a-z+]+://)[^@]*@#\1***@#'
 ``` Then work out the update against
 the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
 the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
@@ -417,7 +417,7 @@ measured and the sequence as reviewed.
    unrecoverable once the migration shell exits and the user is locked out of their own dashboard.
    **The failure is badly disguised:** a first deploy without them fails as
    `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
-   serving at all. `insta --agent logs compute <svc>` carries the real line.
+   serving at all. `insta --agent compute logs <svc>` carries the real line.
 3. **The files come out over the S3 gateway — there is no volume to copy.** Skipping this is the one way to
    produce a migration that looks clean and is not: the dump carries `storage.buckets` and `storage.objects`, so a
    target restored without the bytes lists every file and serves none. InsForge Storage speaks S3 at

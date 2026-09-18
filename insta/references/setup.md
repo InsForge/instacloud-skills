@@ -8,9 +8,9 @@ From zero to a linked project — CLI install, target selection, auth, project +
 # agent one-liner — CLI + the insta skill for every coding agent + MCP (preferred; any OS/shell,
 # Node 18+; self-installs the CLI globally). ALWAYS targets prod (CLI >= 0.0.38 — switches a
 # staging-leftover machine back, announced):
-npx -y insta@latest --agent setup agent
+npx -y insta@latest --agent agent setup
 # staging is its own explicit one-liner (persists the env switch itself):
-npx -y insta@latest --agent setup agent --env staging
+npx -y insta@latest --agent agent setup --env staging
 # no Node? macOS/Linux ONLY — never on native Windows (PowerShell's curl alias + WSL bash shim break it):
 curl -fsSL agents.instacloud.com | sh
 # staging curl route NOT LIVE YET — until its DNS ships, use the raw URL below:
@@ -19,10 +19,14 @@ curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh 
 # CLI only:
 curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh | sh  # native binary, no Node; macOS/Linux
 npm install -g insta            # npm alternative · one-shot: npx insta@latest --agent <cmd>
-insta --agent setup agent               # add the agent skills later (user-global, all agents)
+insta --agent agent setup               # add the agent skills later (user-global, all agents)
 insta --agent upgrade                   # self-update (auto-update is on by default pre-1.0)
-insta --agent autoupdate off            # opt out of auto-update
+insta --agent config autoupdate off            # opt out of auto-update
 ```
+
+`insta agent setup` is the canonical path. The old word order — as in `npx -y insta@latest
+setup agent` — still works: a permanent hidden alias with identical options, kept because the
+console, the landing page and third-party docs print that exact one-liner.
 
 Misbehaving or unrecognized command → update first (re-run the installer — it's idempotent — or
 `npm update -g insta`), then retry.
@@ -83,7 +87,7 @@ machine's findings), the skill dirs `npx skills add` fills (`.claude/skills/`, `
 `skills-lock.json` are new in 0.0.59; the skill dirs were already ignored. Never ignore `.insta/`
 wholesale (that hides the project binding), and don't "clean up" the entries or the ignored
 files: a re-link regenerates `.insta/observe/` and the skills, while `.insta/audit.jsonl` is
-append-only local findings, so run `insta --agent observe sync` before removing it. An ignore entry cannot
+append-only local findings, so run `insta --agent agent observe sync` before removing it. An ignore entry cannot
 un-track a file that was committed earlier; the CLI reports those with a
 `git rm -r --cached …` hint.
 
@@ -96,11 +100,11 @@ A cloud project starts **empty**; add what the app needs (insta-oss auto-provisi
 postgres + one storage at create):
 
 ```bash
-insta --agent services add postgres db        # relational DB (size it with insta --agent db limits)
-insta --agent services add storage files     # S3-compatible bucket
-insta --agent services add compute api       # your container; add --volume 1Gi now, or attach later
+insta --agent service add postgres db        # relational DB (size it with insta --agent postgres limits)
+insta --agent service add storage files     # S3-compatible bucket
+insta --agent service add compute api       # your container; add --volume 1Gi now, or attach later
 insta --agent compute volume api --size 1Gi  # later attach/grow persistent /data; mounts on next deploy or `compute restart`
-insta --agent services list --json
+insta --agent service list --json
 ```
 
 Compute volumes are **not create-time only**. Use `--volume <Gi>` when adding a compute service if
@@ -113,11 +117,11 @@ canonical names (`DATABASE_URL`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `REDIS_URL`
 that type's **primary** service on the branch, so a local `.env` works without binding anything;
 they are **not** injected into **compute** until you bind them to a compute service with
 `insta --agent secrets bind`. A **specific** postgres DSN is also directly readable — for a local
-psql, a migration, any tool outside compute — via `insta --agent db url` (prints it) or
-`insta --agent db connect` (opens psql); match those client tools to the server's Postgres major
-first (`pg_version` on `insta --agent services list --json`, see [operate.md](operate.md)). A
+psql, a migration, any tool outside compute — via `insta --agent postgres url` (prints it) or
+`insta --agent postgres connect` (opens psql); match those client tools to the server's Postgres major
+first (`pg_version` on `insta --agent service list --json`, see [operate.md](operate.md)). A
 **non-primary** same-type service's credentials are not in the bundle. Only **postgres** has a
-direct read for one (`insta --agent db url --group <name>`); for storage, redis, mysql and mongodb
+direct read for one (`insta --agent postgres url <name>`); for storage, redis, mysql and mongodb
 there is none — bind it to a compute service, then read that service's env with
 `insta --agent secrets --service compute/<name>`.
 
@@ -127,7 +131,7 @@ there is none — bind it to a compute service, then read that service's env wit
 insta --agent status                       # target + auth + link in one look
 insta --agent login …                      # cloud only, if needed
 insta --agent project create myapp
-insta --agent services add postgres db && insta --agent services add compute app   # cloud; oss has db+storage already
+insta --agent service add postgres db && insta --agent service add compute app   # cloud; oss has db+storage already
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent deploy . --port 8080         # or --image <ref>; then VERIFY the URL (see operate.md)
 ```

@@ -5,7 +5,7 @@ copy of the whole environment — *including the database's data and the bucket'
 in seconds. Use it as the default unit of ALL work. Never develop on `main`.
 
 **Services are branch-owned, not project-wide.** Each branch has its own service catalog —
-`insta --agent services add/list/remove` all default to the **current** branch, and a service added on one
+`insta --agent service add/list/remove` all default to the **current** branch, and a service added on one
 branch does **not** appear on any other branch, including its parent. `insta --agent branch create` **forks**
 the parent's current services at creation time (below); after that, the two branches' catalogs
 diverge independently — adding, removing, or scaling a service on one has no effect on the other.
@@ -26,9 +26,9 @@ insta --agent secrets bindings --target compute/app --branch feat-x
 ```
 
 For direct access to a branch's DB from outside compute (psql, migrations, local tools):
-`insta --agent db url --branch feat-x` prints that branch's connection string; `insta --agent db connect --branch
+`insta --agent postgres url --branch feat-x` prints that branch's connection string; `insta --agent postgres connect --branch
 feat-x` opens psql on it. Before any dump or restore, match the client major to the branch's
-`pg_version` (`insta --agent services list --json --branch feat-x`; see [operate.md](operate.md)).
+`pg_version` (`insta --agent service list --json --branch feat-x`; see [operate.md](operate.md)).
 
 `insta --agent secrets set <NAME> --service compute/app` scopes a **user-defined** secret to that compute
 service. It is separate from provider credential binding (`insta --agent secrets bind`). Removing a service
@@ -49,14 +49,14 @@ Three consequences to internalize:
   **parent's persisted image**, on the cloud and on insta-oss alike (insta-oss redeploys it asleep), so a
   branch of a live service has a working URL from the start: deploy to it when you want the branch's *code*,
   not to make it serve at all. Fork a service that has never been deployed and there is no image to re-run,
-  so that one really is empty until you deploy. `insta --agent services list` shows which is which.
+  so that one really is empty until you deploy. `insta --agent service list` shows which is which.
 - **A literal secret still points at the parent.** User secrets are copied **ciphertext and all**, and only
   the `service_id` is remapped (`branch.ts`); `secrets bind` rules are remapped properly. So a value that is
   itself a URL of a sibling service — `DENO_RUNTIME_URL`, `POSTGREST_BASE_URL`, anything you typed rather
   than bound — still addresses **main's** service from inside the branch. Re-set those on the branch and
   restart, or the branch quietly drives production.
 - A legacy project whose root bucket predates snapshots keeps one **shared** bucket — no storage
-  isolation. `insta --agent manifest` shows what a branch really has.
+  isolation. `insta --agent agent manifest` shows what a branch really has.
 
 **Limits:** ≤10 branches per project (hard). `branch create` does **NOT** switch you; the idle mode
 is per service, not per branch — new compute is born always-on on every branch, `main` included, and

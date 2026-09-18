@@ -27,19 +27,19 @@ file, so "cd somewhere safe" is not isolation.
 
 | On Railway | Do this |
 |---|---|
-| a service, `builder: RAILPACK` or `NIXPACKS` | `insta --agent services add compute X --port <n>`, then `insta --agent compute connect-repo <owner/repo> X` |
+| a service, `builder: RAILPACK` or `NIXPACKS` | `insta --agent service add compute X --port <n>`, then `insta --agent compute connect-repo <owner/repo> X` |
 | a service built from a Dockerfile | same, `connect-repo` builds the Dockerfile when there is one |
 | a service deployed from an image | `insta --agent deploy --image <url> --port <n>` |
-| the Postgres service | `insta --agent services add postgres X` |
-| Redis / MySQL / MongoDB services | `insta --agent services add redis\|mysql\|mongodb X`. **`--source-name` is mandatory** when you bind one, and it fails closed: `sourceName must be one of REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_USERNAME, REDIS_PASSWORD`. That is the guard postgres lacks, which is why the `PGHOST` footgun has no redis equivalent. Also: insta's redis DSN is **`rediss://`** (TLS), where Render's is plain `redis://` — celery/kombu rejects a `rediss://` broker without `?ssl_cert_reqs=`, so a verbatim bind is not always sufficient |
+| the Postgres service | `insta --agent service add postgres X` |
+| Redis / MySQL / MongoDB services | `insta --agent service add redis\|mysql\|mongodb X`. **`--source-name` is mandatory** when you bind one, and it fails closed: `sourceName must be one of REDIS_URL, REDIS_HOST, REDIS_PORT, REDIS_USERNAME, REDIS_PASSWORD`. That is the guard postgres lacks, which is why the `PGHOST` footgun has no redis equivalent. Also: insta's redis DSN is **`rediss://`** (TLS), where Render's is plain `redis://` — celery/kombu rejects a `rediss://` broker without `?ssl_cert_reqs=`, so a verbatim bind is not always sufficient |
 | `deploy.startCommand` running migrations | do NOT carry it over as a startup gate; run migrations with `insta --agent compute exec` (see SKILL.md) |
 | `${{Postgres.DATABASE_URL}}` and friends | `insta --agent secrets bind DATABASE_URL postgres/X --to compute/Y` |
 | an app reading `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPORT` | a code change to read `DATABASE_URL`, per step 1 of the cutover in `../migrate.md`. Railway injects these by default, so expect it |
 | `RAILWAY_*` built-ins, `PORT` | skip: render-time only, and the platform supplies `PORT` here |
 | any other variable | `insta --agent secrets set KEY` |
-| a volume | `--volume <gi>` on `insta --agent services add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the `disk:` row in `migrate/render.md`), and download the source contents while its service still runs |
-| `numReplicas` | `insta --agent services scale compute X <n>` (1 to 10, same region, paid plans) |
-| a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `db always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
+| a volume | `--volume <gi>` on `insta --agent service add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the `disk:` row in `migrate/render.md`), and download the source contents while its service still runs |
+| `numReplicas` | `insta --agent compute scale <n> X` (1 to 10, same region, paid plans) |
+| a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `postgres always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
 | multi-region replicas | not available. One region per service, chosen with `--region` at add time, or one region per template deployment with `insta --agent template deploy --region` |
 
 Railway's Postgres template is **18**, so step 3 is a downgrade. Its volumes carry the same caveat

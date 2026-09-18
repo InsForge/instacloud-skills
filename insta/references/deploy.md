@@ -92,9 +92,9 @@ Provider credential **values** reach two places by different routes. The local s
 (`insta --agent secrets` / `insta --agent run`) carries user-defined secrets **plus** each type's
 **primary** service credentials, so `.env` and a local run have a working `DATABASE_URL` as soon as
 the branch has a postgres. A **compute container** gets nothing it was not explicitly bound. For a
-**specific** (non-primary) postgres there is also a direct read — `insta --agent db url` /
-`insta --agent db connect` (gated `secrets.read`) — for psql, migrations, and tools outside compute; pick
-client tools of the server's Postgres major first (`pg_version` on `insta --agent services list --json`; a row
+**specific** (non-primary) postgres there is also a direct read — `insta --agent postgres url` /
+`insta --agent postgres connect` (gated `secrets.read`) — for psql, migrations, and tools outside compute; pick
+client tools of the server's Postgres major first (`pg_version` on `insta --agent service list --json`; a row
 without one falls back to the exact-version read in [operate.md](operate.md)).
 A non-primary service of **any other type** (storage, redis, mysql, mongodb) has no such read —
 bind it, or read that service's own env with `insta --agent secrets --service compute/<name>`.
@@ -128,8 +128,8 @@ app's expected status) → report deployed **with the URL**. Anything else → t
 **You already own the name** — you set the DNS, InstaCloud does the cert and routing:
 
 ```bash
-insta --agent compute set-domain app.example.com [--branch --group]   # prints the DNS records to add
-insta --agent compute check-domain app.example.com                    # status once DNS propagates
+insta --agent domain attach app.example.com [--branch --group]   # prints the DNS records to add
+insta --agent domain check app.example.com                    # status once DNS propagates
 ```
 
 The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).
