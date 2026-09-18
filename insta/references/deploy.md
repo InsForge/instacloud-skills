@@ -138,9 +138,9 @@ The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an ape
 
 ```bash
 insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
-insta --agent domain buy myapp.com --no-open       # → a Stripe Checkout URL to relay
-insta --agent domain status myapp.com              # poll until the order is registered
-insta --agent domain attach myapp.com              # bind it, and its www
+insta --agent domain buy myapp.com --no-open       # CLI ≥ 0.0.80 — → a Stripe Checkout URL to relay
+insta --agent domain status myapp.com              # CLI ≥ 0.0.80 — poll until the order is registered
+insta --agent domain attach myapp.com              # CLI ≥ 0.0.80 — bind it, and its www
 insta --agent domain status myapp.com              # poll until active
 ```
 
@@ -166,8 +166,8 @@ you to add.
 Any subdomain works, and each one is its own call, so one name can serve several services:
 
 ```bash
-insta --agent domain attach api.myapp.com  --group api    # only api.myapp.com moves
-insta --agent domain attach docs.myapp.com --group web    # docs.myapp.com joins it
+insta --agent domain attach api.myapp.com  --group api    # CLI ≥ 0.0.80 — only api.myapp.com moves
+insta --agent domain attach docs.myapp.com --group web    # CLI ≥ 0.0.80 — docs.myapp.com joins it
 ```
 
 Delete a service and only ITS hostnames go: the rest keep serving, and a domain left with nothing
