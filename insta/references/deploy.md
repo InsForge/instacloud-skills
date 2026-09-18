@@ -36,7 +36,7 @@ The CLI first asks the platform which lane serves the target service, then follo
 **insta-compute service (the default plane for new services):**
 
 1. A `Dockerfile` is **optional**. The CLI packs the directory into a deterministic archive, honouring the root `.dockerignore` (docker semantics) or, without one, `.gitignore` files (git semantics); `.git` and `.insta` never ship. The archive is uploaded straight to the platform's object store (this mint is govern-gated: it can return `approval_required` before anything is uploaded).
-2. One gated call (`deploy`) enqueues **build + deploy as a single operation** and returns at once; the CLI polls it (`queued → building → deploying → live`) for up to 30 minutes. The build gateway builds the dir's own `Dockerfile`, or **detects the runtime with nixpacks when there is none**, pushes the image **pinned by digest**, and deploys it into the service. No `fly` CLI, no local Docker.
+2. One gated call (`deploy`) enqueues **build + deploy as a single operation** and returns at once; the CLI polls it (`queued → building → deploying → live`) for up to 30 minutes. The build gateway builds the dir's own `Dockerfile`, or **detects the runtime with nixpacks when there is none**, pushes the image **pinned by digest**, and deploys it into the service. No `fly` CLI, no local Docker. If it stalls or fails mid-build, `insta --agent build logs <build-id>` (the deploy operation id the CLI prints while polling; `--follow` to stream it live) reads the gateway's own build output — use `--source github` with the GitHub build id instead for a build that a GitHub push triggered.
 3. Re-running the same unchanged directory resolves to the operation it already started and answers in seconds; a changed directory builds again. After an `approval_required`, approve and re-run the same command — the body is byte-identical, so the grant applies.
 4. Do **not** save the nixpacks Dockerfile that `insta --agent build --explain` prints as your `Dockerfile`: it `COPY`s `.nixpacks/` support files the dir does not have. When you do want your own, start from the detected install/start commands or the framework recipes below.
 
@@ -92,9 +92,9 @@ Provider credential **values** reach two places by different routes. The local s
 (`insta --agent secrets` / `insta --agent run`) carries user-defined secrets **plus** each type's
 **primary** service credentials, so `.env` and a local run have a working `DATABASE_URL` as soon as
 the branch has a postgres. A **compute container** gets nothing it was not explicitly bound. For a
-**specific** (non-primary) postgres there is also a direct read — `insta --agent db url` /
-`insta --agent db connect` (gated `secrets.read`) — for psql, migrations, and tools outside compute; pick
-client tools of the server's Postgres major first (`pg_version` on `insta --agent services list --json`; a row
+**specific** (non-primary) postgres there is also a direct read — `insta --agent postgres url` /
+`insta --agent postgres connect` (gated `secrets.read`) — for psql, migrations, and tools outside compute; pick
+client tools of the server's Postgres major first (`pg_version` on `insta --agent service list --json`; a row
 without one falls back to the exact-version read in [operate.md](operate.md)).
 A non-primary service of **any other type** (storage, redis, mysql, mongodb) has no such read —
 bind it, or read that service's own env with `insta --agent secrets --service compute/<name>`.
@@ -128,8 +128,8 @@ app's expected status) → report deployed **with the URL**. Anything else → t
 **You already own the name** — you set the DNS, InstaCloud does the cert and routing:
 
 ```bash
-insta --agent compute set-domain app.example.com [--branch --group]   # prints the DNS records to add
-insta --agent compute check-domain app.example.com                    # status once DNS propagates
+insta --agent domain attach app.example.com [--branch --group]   # prints the DNS records to add
+insta --agent domain check app.example.com                    # status once DNS propagates
 ```
 
 The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).

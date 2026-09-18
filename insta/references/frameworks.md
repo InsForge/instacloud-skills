@@ -96,4 +96,4 @@ CMD ["sh","-c","uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
 
 `curl` the printed URL's health path until it's 200 (cold start takes a few seconds). A 404/502
 that never clears can mean trap #1 (loopback or IPv6-only binding) or #3 (PORT≠EXPOSE) — check
-`insta --agent logs compute`, which prints the platform's "instance refused connection" hint.
+`insta --agent compute logs`, which prints the platform's "instance refused connection" hint.

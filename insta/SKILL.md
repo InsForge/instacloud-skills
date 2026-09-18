@@ -22,7 +22,7 @@ allowed-tools: Bash(insta:*), Bash(npx:*), Bash(curl:*), Bash(command:*), Bash(g
 
 ## Agent execution mode (managed Platform)
 
-`agent-policy` is the only policy system. Humans use normal RBAC; only agent requests enter the
+`agent policy` is the only policy system. Humans use normal RBAC; only agent requests enter the
 policy evaluator. The former `policy` command and approval `--always` flag have been removed.
 
 Always use `insta --agent <command> …` when invoking the CLI as an agent, including setup and
@@ -30,13 +30,13 @@ read-only commands. Examples include the global flag explicitly; with npx, use
 `npx -y insta@latest --agent <command> …`. Do not rely on environment detection alone.
 Commands explicitly marked for a human admin are relay instructions, not agent tool calls:
 never execute them yourself or remove `--agent` to bypass a restriction.
-First run `insta --agent setup agent` in the linked project (or `--project <id>` / `--create <name>`).
+First run `insta --agent agent setup` in the linked project (or `--project <id>` / `--create <name>`).
 This stores a project-bound, 24-hour session in `.insta/agent-session.json`, automatically ignored
 by Git. It supplements the existing user login. Missing, expired, revoked or wrong-project sessions
 fail with setup guidance; never retry a rejected agent request without `--agent`.
 
 Known Codex/Claude Code/Cursor environments also activate agent mode; generic CI or lack of TTY
-does not. MCP tool calls are automatically agent requests. Inspect `insta --agent agent-policy get
+does not. MCP tool calls are automatically agent requests. Inspect `insta --agent agent policy get
 --json` for the current mode and protected branches. All projects initially use `full_access`.
 In `branch_specific` (and `customize`, which is the same mode carrying explicit rules),
 protected writes are denied; risky unprotected operations require human
@@ -52,10 +52,10 @@ backend directly. A project can have any number of **services**, added on demand
 types you build directly against are:
 
 - **postgres** — relational DB born at its plan's resource ceiling (move it within the free cap on
-  any plan with `insta --agent db limits`; above the free cap needs a paid plan). Plain Postgres: connect any driver/ORM directly with the `DATABASE_URL`
+  any plan with `insta --agent postgres limits`; above the free cap needs a paid plan). Plain Postgres: connect any driver/ORM directly with the `DATABASE_URL`
   you bind into compute env (below) — no vendor SDK or vendor skill. The DB is also publicly
-  dialable from outside compute: `insta --agent db url` prints the connection string and
-  `insta --agent db connect` opens a psql session — that's how you (or a human) reach it from a laptop,
+  dialable from outside compute: `insta --agent postgres url` prints the connection string and
+  `insta --agent postgres connect` opens a psql session — that's how you (or a human) reach it from a laptop,
   a migration script, or any external tool. It scales to zero when
   idle, so keep your pool's `idleTimeoutMillis` under the suspend window (see
   [frameworks.md](references/frameworks.md)).
@@ -69,15 +69,15 @@ types you build directly against are:
   as `REDIS_URL`, `MYSQL_URL`, and `MONGODB_URL`.
 
 **A new project starts empty** — no services are created automatically. Add what you need:
-`insta --agent services add postgres <name>`, `insta --agent services add compute <name>`,
-`insta --agent services add storage <name>`, `insta --agent services add redis <name>`, etc. A project may have
+`insta --agent service add postgres <name>`, `insta --agent service add compute <name>`,
+`insta --agent service add storage <name>`, `insta --agent service add redis <name>`, etc. A project may have
 **multiple services of every type** (up to 5 per type). Provider credentials are scoped to the
 service that minted them and use canonical names inside that scope (`DATABASE_URL`, `REDIS_URL`,
 `MYSQL_URL`, `MONGODB_URL`, `AWS_ACCESS_KEY_ID`, `BUCKET_NAME`, …). The **local-dev seam**
 (`insta --agent secrets` → `.env`, `insta --agent run`) carries one set per type, from that type's
 **primary** service on the branch — but they do **not** automatically appear in **compute env**: a
 container gets a provider credential only through an explicit binding, and a non-primary same-type
-service is not in the bundle: for **postgres** read it with `insta --agent db url --group <name>`;
+service is not in the bundle: for **postgres** read it with `insta --agent postgres url <name>`;
 for every other type there is no direct read at all — bind it, or read the env of a compute service
 it is bound to with `insta --agent secrets --service compute/<name>`. Bind
 the credentials a compute service needs,
@@ -96,10 +96,10 @@ insta --agent deploy . --group app --port 8080
 ```
 
 Binding is for **compute env** only. To use a credential yourself — run migrations, inspect data,
-point a local tool at the DB — read the value directly: `insta --agent db url` (postgres connection
-string; `insta --agent db connect` for a psql shell).
+point a local tool at the DB — read the value directly: `insta --agent postgres url` (postgres connection
+string; `insta --agent postgres connect` for a psql shell).
 
-Use `insta --agent services rename <type> <name> <new-name>` to rename a service; existing bindings keep
+Use `insta --agent service rename <type> <name> <new-name>` to rename a service; existing bindings keep
 pointing at that service.
 
 ## Install & upgrade the CLI
@@ -113,7 +113,7 @@ npx insta@latest --agent <cmd>                                  # one-shot, alwa
 ```
 
 The CLI is pre-1.0 and ships often. If a command misbehaves or is unrecognized, **update first**:
-`insta --agent upgrade` (CLIs that have it; auto-update is on by default pre-1.0 — `insta --agent autoupdate off`
+`insta --agent upgrade` (CLIs that have it; auto-update is on by default pre-1.0 — `insta --agent config autoupdate off`
 to disable), else re-run the installer (idempotent) or `npm update -g insta`.
 
 ## Two targets, one CLI
@@ -135,21 +135,21 @@ everything** — the CLI covers the full command surface (bar a few MCP-only rea
 diagnostics, listed in mcp.md), carries linked-repo context
 (`.insta/project.json`), and is the only path for local machine state: auth (`insta --agent login`),
 pulling secret **values** (`insta --agent secrets` / `insta --agent run`, and the postgres DSN via
-`insta --agent db url` / `insta --agent db connect`), source-directory deploys (`insta --agent deploy <dir>`), and the
+`insta --agent postgres url` / `insta --agent postgres connect`), source-directory deploys (`insta --agent deploy <dir>`), and the
 observe hook.
 
 Fall back to the **remote MCP tools** (`insta_*`) only when the CLI can't be invoked: no shell
 (hosted agents like Claude.ai / ChatGPT connectors), or the CLI isn't installed and can't be
-(the common case is fixable with no CLI on PATH: `npx -y insta@latest --agent setup agent -y`
+(the common case is fixable with no CLI on PATH: `npx -y insta@latest --agent agent setup -y`
 self-installs it — see self-heal below). Same platform API, same governance gates, same audit
 trail — but MCP tools take **explicit `projectId`/`branch` args**: never assume the CLI's linked
 context carries over; resolve IDs first (`insta_project_list`) and pass them explicitly. Full
 mapping + connection guide: **[mcp.md](references/mcp.md)**.
 
 **Self-heal:** if the insta skill or the `insta_*` MCP tools are expected but missing, run
-`insta --agent setup agent -y` (installs the skill + registers MCP for Claude Code and every detected
+`insta --agent agent setup -y` (installs the skill + registers MCP for Claude Code and every detected
 agent), then tell the user to **restart their coding tool** — a running session never picks up
-newly registered MCP servers or tools. One specific agent: `insta --agent mcp install --agent <slug>`.
+newly registered MCP servers or tools. One specific agent: `insta --agent config install-mcp --agent <slug>`.
 Registration alone does not authenticate the client; actual tool use requires a completed OAuth
 flow or an authorized credential. The `--mcp-token` option requires token-creation permission;
 an agent denied with `403 unclassified_agent_action` must stop that attempt, not retry as human.
@@ -161,8 +161,8 @@ Route by intent before running preflight ceremony:
 
 **"Ship / deploy this app" (from zero):** don't interrogate state first — run the chain and
 announce it: `insta --agent status` (logged in? linked?) → if unauthenticated on cloud, `insta --agent login` → if
-unlinked, `insta --agent project create <dir-name>` → `insta --agent services add postgres db` (if the app needs a
-DB) + `insta --agent services add compute app` → bind needed service credentials into compute
+unlinked, `insta --agent project create <dir-name>` → `insta --agent service add postgres db` (if the app needs a
+DB) + `insta --agent service add compute app` → bind needed service credentials into compute
 (`insta --agent secrets sources`, then `insta --agent secrets bind DATABASE_URL postgres/db --to compute/app`) →
 `insta --agent deploy . --port <the port the app listens on>` → **verify the printed URL serves** (below).
 The app reads `process.env` creds.
@@ -188,8 +188,8 @@ Skip this ceremony for the ship-from-zero chain above — `status` is its first 
 **Context rules (multi-agent safety):**
 
 - The link (`./.insta/project.json`) is **per directory** and includes the current branch.
-- **Prefer explicit `--branch <name>`** on commands that accept it (`secrets`, `deploy`, `metrics`,
-  `logs`, `events`, `db url` / `db connect` — a wrong-branch DSN means querying the wrong
+- **Prefer explicit `--branch <name>`** on commands that accept it (`secrets`, `deploy`, `<type> metrics`,
+  `<type> logs`, `agent events`, `postgres url` / `postgres connect` — a wrong-branch DSN means querying the wrong
   database) over `insta --agent branch switch` when acting on a branch you don't own — `switch`
   mutates the shared per-directory link and races parallel agents in the same checkout.
 - For parallel agents, the rule is **1:1:1 — task ↔ git worktree ↔ insta branch** (each worktree has
@@ -232,11 +232,11 @@ allow/deny/approve, using the project's agent policy). When a command returns
 **"approval required" with an approval id**:
 
 - **Relay it to the human immediately and verbatim** — the exact line to run:
-  `insta approvals approve <id>` in a human terminal. Approvals authorize only one exact request.
+  `insta agent approvals approve <id>` in a human terminal. Approvals authorize only one exact request.
   Don't summarize it away, don't retry the command, and don't report the task as failed without
   surfacing the approval first. Only an **admin** can approve.
 - Grants are **single-use**: after approval, **re-run the original command**; the next occurrence
-  prompts again unless a human explicitly changes the applicable `agent-policy` rule.
+  prompts again unless a human explicitly changes the applicable `agent policy` rule.
 - **Never work around a gate** (e.g. by hand-editing state or bypassing the CLI) — the gate is the
   product's safety model. A `deny` policy is a hard no: report it, don't circumvent it.
 
@@ -244,8 +244,8 @@ allow/deny/approve, using the project's agent policy). When a command returns
 
 ```bash
 insta --agent status --json                          # target, login, link, current branch
-insta --agent manifest --json                        # agent-legible env view: every branch's services + URLs
-insta --agent services list --json                   # what exists on this project
+insta --agent agent manifest --json                        # agent-legible env view: every branch's services + URLs
+insta --agent service list --json                   # what exists on this project
 insta --agent run -- <cmd>                           # run with the branch bundle injected (NOTHING on disk; --branch <b>)
 insta --agent run --service compute/app -- <cmd>     # one service's own env — needed when several define the same name
 insta --agent run --ignore-collisions -- <cmd>       # run anyway; every colliding name is REMOVED from the child env
@@ -262,12 +262,12 @@ insta --agent compute exec app -- printenv PORT      # one-shot command on live 
 insta compute ssh app --setup                        # HUMANS ONLY: interactive shell via `ssh app.insta` (API keys refused; agents use `compute exec`)
 insta --agent compute volume app --size 1Gi          # attach/grow persistent /data; mounts on next deploy or `compute restart`
 insta --agent branch create feat && insta --agent branch list --json
-insta --agent logs compute --limit 100 --json        # runtime logs (--branch <b>; also redis|mysql|mongodb; db is provider-limited)
-insta --agent logs compute --since 2h --json         # time window (--from/--to too) — a windowless read is ONE page (~100 lines)
-insta --agent metrics compute --json                 # service metrics (also redis|mysql|mongodb)
-insta --agent events --limit 50 --json               # audit + agent-event timeline
-insta --agent usage --json                           # cloud only (insta --agent billing --json likewise)
-insta --agent approvals list --status pending        # outstanding gates
+insta --agent compute logs --limit 100 --json        # runtime logs (--branch <b>; also <postgres|redis|mysql|mongodb>; postgres is provider-limited)
+insta --agent compute logs --since 2h --json         # time window (--from/--to too) — a windowless read is ONE page (~100 lines)
+insta --agent compute metrics --json                 # service metrics (also <postgres|redis|mysql|mongodb>)
+insta --agent agent events --limit 50 --json               # audit + agent-event timeline
+insta --agent billing usage --json                           # cloud only (insta --agent billing --json likewise)
+insta --agent agent approvals list --status pending        # outstanding gates
 ```
 
 Use `--json` wherever you parse output.
@@ -310,11 +310,11 @@ If a request spans two areas ("deploy and check it's healthy"), load both and an
   branch's primary provider credentials — never hardcode or print secret
   values. `DATABASE_URL`, `AWS_*` / `BUCKET_NAME`, `REDIS_*`, `MYSQL_*`, and `MONGODB_*` are service
   credentials that reach production compute only through explicit `insta --agent secrets bind` rules. For
-  direct use **outside** compute the sanctioned read is `insta --agent db url` / `insta --agent db connect`
-  (postgres; gated `secrets.read`) — pipe it (`psql "$(insta --agent db url)"`), never paste the DSN into
+  direct use **outside** compute the sanctioned read is `insta --agent postgres url` / `insta --agent postgres connect`
+  (postgres; gated `secrets.read`) — pipe it (`psql "$(insta --agent postgres url)"`), never paste the DSN into
   files or code. For every type, the branch's **primary** service's credentials are already in
   `insta --agent secrets` / `insta --agent run`. A **non-primary** service is not in the bundle:
-  postgres has the `--group <name>` read above, and **no other type has any direct read** — bind it,
+  postgres has the `[service]` positional read above (`insta --agent postgres url <name>`), and **no other type has any direct read** — bind it,
   or read that service's own env with `insta --agent secrets --service compute/<name>`.
   User-set config belongs in `insta --agent secrets set <NAME>` (project-wide) / `--branch` for branch
   overrides — never hand-edit `.env` values you want to persist.
@@ -323,9 +323,9 @@ If a request spans two areas ("deploy and check it's healthy"), load both and an
   Migrations run where the DB credentials are bound: on the compute service, via
   `insta --agent compute exec app -- <migrate-cmd>` (never as a startup gate — see
   [deploy.md](references/deploy.md)); or directly, with no compute involved:
-  `psql "$(insta --agent db url --branch <b>)" -f migrations/<file>.sql` (explicit `--branch` — the bare
+  `psql "$(insta --agent postgres url --branch <b>)" -f migrations/<file>.sql` (explicit `--branch` — the bare
   form reads the linked branch's DB). Match `psql` / `pg_dump` / `pg_restore` to the server's
-  Postgres major first — `pg_version` on `insta --agent services list --json --branch <b>` (same branch as
+  Postgres major first — `pg_version` on `insta --agent service list --json --branch <b>` (same branch as
   the DSN); if the row has none, read the exact version instead (see
   [operate.md](references/operate.md)).
 
@@ -338,12 +338,12 @@ timeline, and agent audit patterns are in [governance.md](references/governance.
 not machine size × hours). New compute services are born always-on (since 2026-09-07): no cold
 starts, and the idle app's resident RAM bills at actual usage. Scale-to-zero (`--no-always-on` at
 create, or `insta --agent compute always-on off`) makes an idle service cost nearly nothing at the price of
-a cold start; postgres is unchanged (`insta --agent db always-on`, off by default) — see
+a cold start; postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
-`insta --agent db limits` — per-machine size, see [operate.md](references/operate.md))
-**and machine COUNT** (`insta --agent services scale` — horizontal): a new service is born at its plan's
+`insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
+**and machine COUNT** (`insta --agent compute scale` — horizontal): a new service is born at its plan's
 ceiling and free plans may move within the free cap but not above it, and stay at one machine —
-beyond either is a 403 — `insta --agent billing upgrade` first; `insta --agent usage` /
+beyond either is a 403 — `insta --agent billing subscribe` first; `insta --agent billing usage` /
 `insta --agent billing` show cycle usage and cost. One free org per user. Full flags in
 [cli-reference.md](cli-reference.md).
 

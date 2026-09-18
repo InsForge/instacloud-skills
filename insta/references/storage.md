@@ -1,6 +1,6 @@
 # Storage buckets
 
-`insta --agent services add storage <name>` gives the branch a **private, S3-compatible bucket**. There is
+`insta --agent service add storage <name>` gives the branch a **private, S3-compatible bucket**. There is
 no vendor SDK and no InstaCloud storage client — point any S3 library at the bound credentials and
 it works. This page is the part that isn't obvious: how bytes actually get in and out, and the
 handful of things that bite first.
@@ -61,7 +61,7 @@ s3.put_object(Bucket=os.environ['BUCKET_NAME'], Key='avatars/u1.png', Body=data,
 
 The same credentials drive any S3 tool, which is the quickest way to seed or inspect a bucket
 (these examples assume an environment where the `AWS_*`/`BUCKET_NAME` values are already
-bound/configured. There is no storage equivalent of `insta --agent db url`, but the branch's
+bound/configured. There is no storage equivalent of `insta --agent postgres url`, but the branch's
 **primary** storage service's `AWS_*`/`BUCKET_NAME` do arrive in `insta --agent secrets` /
 `insta --agent run`, so a local `.env` usually has them already; a **non-primary** bucket's
 credentials have to be bound to a compute service):
@@ -80,7 +80,7 @@ rclone copy ./dist insta:$BUCKET_NAME/dist       # with the same key/secret/endp
    gets its **own** bucket (CoW-forked from the parent at `insta --agent branch create`) with its **own**
    scoped key, so a leaked branch credential cannot reach production data. **The exception is a
    legacy project whose root bucket predates snapshots: it keeps one shared bucket, with no storage
-   isolation at all** — a branch writes straight into production's objects. `insta --agent manifest` shows
+   isolation at all** — a branch writes straight into production's objects. `insta --agent agent manifest` shows
    what a branch really has, and it is the only way to know which case you are in. Either way, read
    `BUCKET_NAME` from env per branch rather than hardcoding a name you saw once.
 3. **Expecting a branch's files to be promoted.** They are not. `insta --agent branch merge` creates missing
@@ -104,7 +104,7 @@ Buckets are private by default: reads need the credentials or a presigned URL. F
 anonymous public-read with
 
 ```bash
-insta --agent services set-access storage <name> public   # or private
+insta --agent storage set-access public --service <name>   # or private
 ```
 
 Public is a whole-bucket switch, not per-object. When only *some* files should be reachable, keep the
