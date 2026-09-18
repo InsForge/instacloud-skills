@@ -322,11 +322,16 @@ insta --agent compute stop <service>
 ```
 
 This deploy exists to prove the image builds, the binding resolves and the app serves. It must not
-leave a **second writable system standing.** A compute service has **no domain until its first
-successful deploy** — measured on three separate services: `service add` leaves `domain: null`,
-and the host is minted with the image, which is what the pre-flight above already says. (Both
-`service add --help` and an earlier version of this note claimed `add` assigns one; they are
-wrong.) But domain and machine arrive together, so the moment this deploy succeeds the app **is**
+leave a **second writable system standing.** **The domain timing changed under this file** (reserved
+compute identity, shipped 2026-09-17): an empty `service add compute` (no `--image` — this runbook's
+flow) now best-effort-reserves the public hostname right at creation, so `domain` is usually already
+set by the time you read `service list` above — not the `domain: null` an earlier version of this
+note measured. It is still best-effort, not a promise: a compute plane too old to reserve, or simply
+down, does not fail the create, and `domain` then stays null exactly as measured before, filled
+instead by the first successful deploy (or a later read-side repair). A service created **with**
+`--image` skips the reservation entirely and always gets its domain from that first deploy. Either
+way, a domain existing is not the same as the app serving: nothing is listening until a machine
+actually runs, and that machine is *this* deploy — so the moment it succeeds the app **is**
 reachable on the public internet, and any write it takes — a session row, a signup, an analytics insert — lands in
 the target database *before* the restore. That breaks the cutover twice over: step 3 requires an
 empty target and would now collide, and step 2's promise that only one side accepts writes is no

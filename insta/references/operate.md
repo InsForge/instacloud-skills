@@ -33,15 +33,15 @@ deployed).
 
 ## Metrics & logs
 
-`metrics`/`logs` are per-group subcommands now — every service group has its own (`compute|postgres|
-redis|mysql|mongodb <metrics|logs> [service]`), not a shared top-level command taking a target:
+`metrics`/`logs` are per-group subcommands now — every service group has its own (`<compute|postgres|
+redis|mysql|mongodb> <metrics|logs> [service]`), not a shared top-level command taking a target:
 
 ```bash
 insta --agent compute metrics [service] [--branch --from --to --step --json]
 insta --agent compute logs [service] [--branch --limit --region --instance --json]
 insta --agent compute logs [service] --since 2h     # time window (--from/--to also accepted) — pages ~7 days of history
-insta --agent redis|mysql|mongodb metrics [service]   # managed DBs are Fly apps: same full metrics/logs
-insta --agent redis|mysql|mongodb logs [service] [--deploy]
+insta --agent <redis|mysql|mongodb> metrics [service]   # managed DBs are Fly apps: same full metrics/logs
+insta --agent <redis|mysql|mongodb> logs [service] [--deploy]
 insta --agent postgres metrics [service] · insta --agent postgres logs [service]      # provider-limited — returns a note, not series
 ```
 

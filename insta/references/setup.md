@@ -24,7 +24,7 @@ insta --agent upgrade                   # self-update (auto-update is on by defa
 insta --agent config autoupdate off            # opt out of auto-update
 ```
 
-`insta --agent agent setup` is the canonical path. The old word order — as in `npx -y insta@latest setup agent` — still works: a permanent hidden alias with identical options, kept because the console, the landing page and third-party docs print that exact one-liner (agent mode: put `--agent` before `setup`, e.g. `insta --agent setup agent`).
+`insta --agent agent setup` is the canonical path — agent mode always puts `--agent` right after `insta` (e.g. `insta --agent agent setup`; the legacy word order takes it the same way: `insta --agent setup agent`). The old word order — a permanent hidden alias with identical options — is `insta agent setup` reversed to `insta setup agent`; the console, the landing page and third-party docs print it as `npx -y insta@latest setup agent`, **without** the flag, because that is the one-liner those surfaces show a human. Don't copy that bare line as an agent: this file is what agents fetch at setup time, `--agent` marks every agent request path per SKILL.md, and setup is what creates the project-bound session governance is read against. The line to actually run as an agent is `npx -y insta@latest --agent setup agent` — or, preferably, the canonical `npx -y insta@latest --agent agent setup`.
 
 Misbehaving or unrecognized command → update first (re-run the installer — it's idempotent — or
 `npm update -g insta`), then retry.

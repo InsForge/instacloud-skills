@@ -262,9 +262,9 @@ insta --agent compute exec app -- printenv PORT      # one-shot command on live 
 insta compute ssh app --setup                        # HUMANS ONLY: interactive shell via `ssh app.insta` (API keys refused; agents use `compute exec`)
 insta --agent compute volume app --size 1Gi          # attach/grow persistent /data; mounts on next deploy or `compute restart`
 insta --agent branch create feat && insta --agent branch list --json
-insta --agent compute logs --limit 100 --json        # runtime logs (--branch <b>; also postgres|redis|mysql|mongodb; postgres is provider-limited)
+insta --agent compute logs --limit 100 --json        # runtime logs (--branch <b>; also <postgres|redis|mysql|mongodb>; postgres is provider-limited)
 insta --agent compute logs --since 2h --json         # time window (--from/--to too) — a windowless read is ONE page (~100 lines)
-insta --agent compute metrics --json                 # service metrics (also postgres|redis|mysql|mongodb)
+insta --agent compute metrics --json                 # service metrics (also <postgres|redis|mysql|mongodb>)
 insta --agent agent events --limit 50 --json               # audit + agent-event timeline
 insta --agent billing usage --json                           # cloud only (insta --agent billing --json likewise)
 insta --agent agent approvals list --status pending        # outstanding gates
