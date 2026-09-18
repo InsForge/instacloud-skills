@@ -137,13 +137,16 @@ on a Dockerfile-less repo it needs a local `nixpacks` binary, which the CLI neve
 one it reports `verdict: failed` for the *wrong reason* (`nixpacks is not installed to generate
 one`, start-command check `skipped`) on a repo the server lane builds fine. Install nixpacks first.
 
-**Write down the variable name, or the file and line to change.** You cannot set the value yet —
-on insta-compute the host is minted by the plane at first deploy, so it does not exist until after
-the deploy below (`adapters/insta-compute.ts`: routeKey is "learned at first deploy", and
-`access_host` "is the only source of truth"). **That is why this is two steps: decide here, apply in
-step 5.** If the answer was "a literal I must edit", make that edit NOW, before the deploy — but you cannot put
-the real host in it, because the host does not exist until that deploy succeeds. Replace the literal with a
-neutral variable of your own (`APP_HOSTNAME`, `DJANGO_ALLOWED_HOSTS`), deploy, then set it in step 5 and
+**Write down the variable name, or the file and line to change.** You may not be able to set the
+value yet — a `service add compute` born empty usually has its host reserved right at creation now
+(best-effort, since 2026-09-17; see the domain note in the cutover section below), but on an old or
+unavailable plane, or once `--image` is also passed, the host is still minted only at the deploy
+below: `access_host`, the plane-returned field, remains the only source of truth for it
+(`adapters/insta-compute.ts`). **That is why this is two steps regardless: decide here, apply in
+step 5** — treat the host as unknown even when it happens to already be set, so the same recipe
+covers both cases. If the answer was "a literal I must edit", make that edit NOW, before the deploy
+— but do not put a real host in it, because you cannot rely on one existing yet. Replace the literal
+with a neutral variable of your own (`APP_HOSTNAME`, `DJANGO_ALLOWED_HOSTS`), deploy, then set it in step 5 and
 restart. Editing the code now is what makes step 5 a one-variable fix instead of a rebuild, so the
 image is already right.
 

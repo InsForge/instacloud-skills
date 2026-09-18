@@ -39,7 +39,7 @@ rules and `customize` requires at least one, so a preset can never be showing on
 something else decides. An action `customize` does not name falls back to the `branch_specific`
 default in the table above, never to `allow`.
 
-`insta agent policy get --json` returns an `actionCatalog`: every action, its group and label, and
+`insta --agent agent policy get --json` returns an `actionCatalog`: every action, its group and label, and
 whether a rule may name it (`editable: false` for the fixed invariants — reads are always allowed,
 project administration always denied). **Read it before proposing a rule** rather than working
 from the table above, which is a summary and can lag the platform.

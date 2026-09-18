@@ -98,7 +98,8 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | region discovery | `insta_regions` |
 | `insta --agent service add/list/remove/rename` [`--branch`] | `insta_service_add` / `insta_service_list` / `insta_service_remove` / `insta_service_rename` (all take `branch?`; add takes `public?` for storage) |
 | `insta --agent storage set-access` | `insta_service_access` |
-| `insta --agent compute scale` / `insta --agent compute limits` | `insta_service_scale` / `insta_service_upgrade` — `services upgrade` is removed from the CLI; `compute limits` (`--memory`) is now the only control the tool's counterpart has |
+| `insta --agent compute scale` | `insta_service_scale` |
+| *(no CLI equivalent)* | `insta_service_upgrade` — legacy tool that raises a compute or postgres spec directly; the CLI retired `services upgrade` with no replacement for postgres, and for compute it is superseded by `insta_compute_limits` (below) — prefer that one, this tool is listed by the server but should not be reached for |
 | `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_compute_control` / `insta_compute_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
 | `insta --agent compute exec [service] -- <command>` | `insta_compute_exec` (`name?`/`branch?`/`command`/`timeoutSec?`) |
 | `insta --agent compute limits/always-on/volume` (same shape under `redis\|mysql\|mongodb`) | `insta_compute_limits` / `insta_compute_always_on` / `insta_volume` (read/grow: compute + managed fly DBs; remove: compute only, destroys the disk and its data) |
