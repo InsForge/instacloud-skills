@@ -204,20 +204,22 @@ insta --agent compute repo <svc> --json      # → source.last_build.{status,err
 ```
 
 Nothing else tells you. Plain `insta --agent compute repo` **hides** the build result;
-`compute status` sits at `desired=running live=none` indefinitely; and both `compute logs <svc>` and
-`compute logs <svc> --deploy` answer `note: operations unavailable (insta-compute 404: not found)`
+`insta --agent compute status` sits at `desired=running live=none` indefinitely; and both `insta --agent compute logs <svc>` and
+`insta --agent compute logs <svc> --deploy` answer `note: operations unavailable (insta-compute 404: not found)`
 whenever no machine has ever existed — which reads as a broken logging subsystem rather than a
 failed build. If `last_build.status` is `failed`, there is **no host to curl**, so step 1's pass
 condition is unreachable rather than failing.
 
 **Do not stop at the `error` string — it is not diagnostic.** All you get is
-`build <id> failed: build command failed`, and `compute logs … --deploy` answers
+`build <id> failed: build command failed`, and `insta --agent compute logs … --deploy` answers
 `operations unavailable (insta-compute 404: not found)` because no machine ever existed — this file
-originally found no build-log surface at all, but `insta --agent build logs <build-id> --source archive`
-(the deploy operation id) now reads the gateway's own build output; check it before reproducing
-locally. **Reproduce locally when that's still not enough:** `insta --agent build <dir>`, then
-`nixpacks build <dir>` for the full output. That is how the celery cause (no detectable start
-command) was found.
+originally found no build-log surface at all, but a `connect-repo` build is **GitHub-triggered**, so
+it reads with `--source github`, not `--source archive` (which takes a deploy operation id this path
+never has): `insta --agent build logs <build-id> --source github` — `<build-id>` is `last_build.id`
+from the same `insta --agent compute repo <svc> --json` you already ran — now reads the gateway's
+own build output; check it before reproducing locally. **Reproduce locally when that's still not
+enough:** `insta --agent build <dir>`, then `nixpacks build <dir>` for the full output. That is how
+the celery cause (no detectable start command) was found.
 
 **Before reaching for a different lane: almost no migration blocker is a lane problem.** Measured
 across six real repos, the things that stopped a migration were **app-side** (an `ALLOWED_HOSTS`

@@ -108,7 +108,7 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent secrets list/set/unset` | `insta_secrets_list` (names only) / `insta_secrets_set` / `insta_secrets_unset` |
 | `insta --agent secrets sources/bindings/bind/unbind` | `insta_secret_sources` / `insta_secret_bindings` / `insta_secret_bind` / `insta_secret_unbind` (provider credential binding; names only, no secret values) |
 | `insta --agent deploy --image <url>` | `insta_deploy` (image-only) |
-| `insta --agent <compute\|postgres\|redis\|mysql\|mongodb> metrics/logs` (`--deploy` for deploy events) · `insta --agent agent events` | `insta_metrics` / `insta_logs` / `insta_deploy_events` / `insta_events` |
+| `insta --agent <compute\|postgres\|redis\|mysql\|mongodb> metrics/logs` (`--deploy` for deploy events — compute/redis/mysql/mongodb only; postgres has no deploy events) · `insta --agent agent events` | `insta_metrics` / `insta_logs` / `insta_deploy_events` / `insta_events` |
 | `insta --agent <redis\|mysql\|mongodb> status` reads the same runtime-health data (filtered to one service); db provider operations have no CLI equivalent | `insta_runtime_health` / `insta_operations` (database provider operations, not a general operations feed; for watching a postgres branch or restore settle) |
 | `insta --agent postgres stats` (`metrics` kind; `insight`/`activity`/`query-stats` are MCP-only) | `insta_db_stats` (read-only; `kind` = metrics, insight, activity, query-stats) |
 | `insta --agent billing usage` / `billing` | `insta_usage` / `insta_org_usage` (org-level, optional `from`/`to`) / `insta_billing_summary` / `insta_billing_overview` (org-level, current cycle only) |
