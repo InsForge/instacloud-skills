@@ -69,7 +69,7 @@ InstaCloud runs two separate deployments, and each gets its own branch of this r
 | `prod` | `InsForge/insta-skills` (`main`) |
 | `staging` | `InsForge/insta-skills#devel` |
 
-`insta --agent agent setup` installs prod's skill text by default — bare `setup agent` always targets
+`insta --agent agent setup` installs prod's skill text by default — bare `agent setup` always targets
 prod (CLI ≥ 0.0.38), switching a staging-leftover machine back. `insta --agent agent setup --env staging`
 is the explicit staging setup; it installs the `#devel` skill text that describes the staging
 control plane.

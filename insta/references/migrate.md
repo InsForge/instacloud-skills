@@ -204,15 +204,15 @@ insta --agent compute repo <svc> --json      # → source.last_build.{status,err
 ```
 
 Nothing else tells you. Plain `insta --agent compute repo` **hides** the build result;
-`compute status` sits at `desired=running live=none` indefinitely; and both `logs compute <svc>` and
-`logs compute <svc> --deploy` answer `note: operations unavailable (insta-compute 404: not found)`
+`compute status` sits at `desired=running live=none` indefinitely; and both `compute logs <svc>` and
+`compute logs <svc> --deploy` answer `note: operations unavailable (insta-compute 404: not found)`
 whenever no machine has ever existed — which reads as a broken logging subsystem rather than a
 failed build. If `last_build.status` is `failed`, there is **no host to curl**, so step 1's pass
 condition is unreachable rather than failing.
 
 **Do not stop at the `error` string — it is not diagnostic.** All you get is
 `build <id> failed: build command failed`, and there is no build-log surface at all
-(`logs … --deploy` answers `operations unavailable (insta-compute 404: not found)` because no
+(`compute logs … --deploy` answers `operations unavailable (insta-compute 404: not found)` because no
 machine ever existed). **Reproduce locally to learn why:** `insta --agent build <dir>`, then
 `nixpacks build <dir>` for the full output. That is how the celery cause (no detectable start
 command) was found.

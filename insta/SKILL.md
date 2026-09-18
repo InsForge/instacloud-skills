@@ -188,8 +188,8 @@ Skip this ceremony for the ship-from-zero chain above — `status` is its first 
 **Context rules (multi-agent safety):**
 
 - The link (`./.insta/project.json`) is **per directory** and includes the current branch.
-- **Prefer explicit `--branch <name>`** on commands that accept it (`secrets`, `deploy`, `metrics`,
-  `logs`, `events`, `postgres url` / `postgres connect` — a wrong-branch DSN means querying the wrong
+- **Prefer explicit `--branch <name>`** on commands that accept it (`secrets`, `deploy`, `<type> metrics`,
+  `<type> logs`, `agent events`, `postgres url` / `postgres connect` — a wrong-branch DSN means querying the wrong
   database) over `insta --agent branch switch` when acting on a branch you don't own — `switch`
   mutates the shared per-directory link and races parallel agents in the same checkout.
 - For parallel agents, the rule is **1:1:1 — task ↔ git worktree ↔ insta branch** (each worktree has

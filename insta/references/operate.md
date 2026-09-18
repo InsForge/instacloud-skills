@@ -27,7 +27,7 @@ wakes a suspended instance, like any connection); `insta --agent postgres stats 
 reports it as `serverVersion` but never wakes one, so the field is present only while the instance
 is running.
 
-`manifest` is the first stop whenever reality seems to disagree with expectations — it shows what
+`agent manifest` is the first stop whenever reality seems to disagree with expectations — it shows what
 each branch *actually* has (including a legacy shared bucket, or a compute group that was never
 deployed).
 
@@ -146,7 +146,7 @@ bundle. Reach for it in exactly two situations:
    the same command, so following one with a `restart` buys nothing and bills a second rollout. On an
    OLDER build they still only store the value and a `restart` is still required — tell the two apart
    by whether the command printed a per-service line (`~ … redeployed`), not by assuming the version:
-   `autoupdate off` / `INSTA_NO_AUTOUPDATE=1` mean an agent can sit on an old build indefinitely.
+   `config autoupdate off` / `INSTA_NO_AUTOUPDATE=1` mean an agent can sit on an old build indefinitely.
 2. **The machine is up but wedged.** A crash-looped or hung process is still `started`, so
    `insta --agent compute start` is a no-op on it — it only flips desired state and wakes a machine that is
    *down*. `restart` cycles it.
@@ -260,7 +260,7 @@ Work the list in order — these cover ~all real failures seen so far:
 
 Report the exact observed state (HTTP code, log line, gate id) — never an assumed one. A deploy
 isn't "done" until the URL served; a promotion isn't "done" until main's URL validated; a teardown
-isn't "done" until `manifest`/`events` reflect it.
+isn't "done" until `agent manifest`/`agent events` reflect it.
 
 ## Cloud vs insta-oss behavior differences
 
@@ -268,7 +268,7 @@ isn't "done" until `manifest`/`events` reflect it.
 | --- | --- | --- |
 | login | required | doesn't exist (localhost trust) |
 | usage / billing | real (billing dimensions) | 501 — no billing locally |
-| metrics / logs | served (compute full, db limited) | 501 today (docker-stats planned) |
+| metrics / logs | served (compute full, postgres limited) | 501 today (docker-stats planned) |
 | source deploy (`deploy <dir>`) | ✅ remote build | not yet — use `--image` |
 | service add postgres/storage | ✅ (≤5 each) | 501 — one of each, auto-provisioned |
 | branch compute | parent's image, already running | parent's image, redeployed asleep |

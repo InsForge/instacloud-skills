@@ -23,7 +23,7 @@ the things a remote server cannot or must not do:
 | `insta --agent secrets` (pull values → `.env`) / `insta --agent run` | secret **values** never flow out of MCP — names only, values in |
 | `insta --agent postgres url` / `insta --agent postgres connect` (postgres DSN) | same rule — the DSN is a value read, so it only exists on the CLI |
 | `insta --agent deploy <dir>` (source builds) | needs a local build context; `insta_deploy` takes prebuilt image URLs only |
-| `insta --agent agent observe` hook / `insta --agent setup` | local-machine operations |
+| `insta --agent agent observe` hook / `insta --agent agent setup` | local-machine operations |
 | `insta --agent postgres limits` (database machine spec) | not yet exposed as an MCP tool |
 
 ## Connecting
@@ -77,7 +77,7 @@ staging install silently pointed at the prod server. Because the names differ, *
 registered on one machine at once** — check which you're talking to with `insta --agent env`.
 
 `insta --agent agent setup --env staging` (or `curl -fsSL agents.staging.instacloud.com | sh`) switches
-the environment and registers staging's server in one step (CLI ≥ 0.0.38 — bare `setup agent`
+the environment and registers staging's server in one step (CLI ≥ 0.0.38 — bare `agent setup`
 always targets prod, so a bare re-run after `env use staging` would switch the machine back).
 `INSTA_MCP_URL` still overrides outright, for a self-hosted or tunnelled server.
 

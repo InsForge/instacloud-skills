@@ -24,9 +24,7 @@ insta --agent upgrade                   # self-update (auto-update is on by defa
 insta --agent config autoupdate off            # opt out of auto-update
 ```
 
-`insta agent setup` is the canonical path. The old word order — as in `npx -y insta@latest
-setup agent` — still works: a permanent hidden alias with identical options, kept because the
-console, the landing page and third-party docs print that exact one-liner.
+`insta agent setup` is the canonical path. The old word order — as in `npx -y insta@latest setup agent` — still works: a permanent hidden alias with identical options, kept because the console, the landing page and third-party docs print that exact one-liner.
 
 Misbehaving or unrecognized command → update first (re-run the installer — it's idempotent — or
 `npm update -g insta`), then retry.
