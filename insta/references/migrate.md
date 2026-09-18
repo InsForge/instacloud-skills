@@ -211,9 +211,11 @@ failed build. If `last_build.status` is `failed`, there is **no host to curl**, 
 condition is unreachable rather than failing.
 
 **Do not stop at the `error` string — it is not diagnostic.** All you get is
-`build <id> failed: build command failed`, and there is no build-log surface at all
-(`compute logs … --deploy` answers `operations unavailable (insta-compute 404: not found)` because no
-machine ever existed). **Reproduce locally to learn why:** `insta --agent build <dir>`, then
+`build <id> failed: build command failed`, and `compute logs … --deploy` answers
+`operations unavailable (insta-compute 404: not found)` because no machine ever existed — this file
+originally found no build-log surface at all, but `insta --agent build logs <build-id> --source archive`
+(the deploy operation id) now reads the gateway's own build output; check it before reproducing
+locally. **Reproduce locally when that's still not enough:** `insta --agent build <dir>`, then
 `nixpacks build <dir>` for the full output. That is how the celery cause (no detectable start
 command) was found.
 
