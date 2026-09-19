@@ -60,6 +60,14 @@ keys and raw request data must not be included in source control or approval rep
 | `insta --agent secrets` [`--branch <name>`] [`--service <compute/name>`] [`-o <file>`] [`--print`] [`--json`] | secret seam → write the branch's secrets to `./.env` (gated: `secrets.read`). Carries user-defined project/branch secrets **plus the branch's canonical provider credentials** — one `DATABASE_URL` / `REDIS_URL` / `AWS_*` set from the **primary** service of each type (see **Provider credentials** below). **`--service <compute/name>` (CLI ≥ 0.0.65)** answers with **one compute service's own** env instead of the branch-wide merge: that service's user secrets, the unbound ones, its explicit bindings, and the same canonical credentials. Needed when several services define the same name — see **Same-name variables** below |
 | `insta --agent secrets list` [`--branch <b>`] [`--json`] | secret names for the branch, **grouped by service** — each service's bound secrets, plus a branch-level "unbound" group and a project-wide group |
 | `insta --agent secrets tree` [`--json`] | the whole project as `project → branch → service → secrets` (names only) |
+| `insta --agent cron list` [`--branch <b>`] [`--json`] · `insta --agent cron show <name>` [`--json`] | the branch's schedules / one of them. `show` lists header **names** only — values are encrypted at rest and the API never returns them, so an empty value column would read as "unset" rather than "not shown" |
+| `insta --agent cron create <name> <expression>` `--url <https://…>` \| `--service <name>` [`--path </api/cron>`] [`--method GET\|POST`] [`--body <json>`] [`--header k=v`]… [`--timeout <ms>`] [`--branch <b>`] [`--json`] | schedule an HTTP call. Five-field cron, **UTC**, one-minute floor. `--service` targets a compute service in the same project (the platform wakes it first); `--url` any external https endpoint (gated: `cron.write`, **approve** by default) |
+| `insta --agent cron edit <name>` [same flags as create, all optional] [`--json`] | change a schedule. Sends `If-Match` on the revision it just read — a 409 means someone else changed it meanwhile, and the CLI says so rather than re-reading and clobbering (gated: `cron.write`) |
+| `insta --agent cron pause <name>` · `insta --agent cron resume <name>` [`--json`] | stop / restart firing. **This is the kill switch** for a misbehaving schedule — per job, immediate, no redeploy. Resume anchors the next run in the future; the pause window is never backfilled (gated: `cron.write`) |
+| `insta --agent cron run <name>` [`--json`] | fire once now, in addition to the schedule. Returns `202` + a run id; does not wait. Carries an idempotency key minted once per invocation, so a retried command cannot double-fire (gated: `cron.run`, **approve** by default) |
+| `insta --agent cron runs <name>` [`--limit <n>`] [`--json`] | run history: status, trigger, attempts, the **wake/request split**, HTTP status. Where you look when a schedule misbehaves |
+| `insta --agent cron delete <name>` [`--yes`] [`--json`] | delete the schedule — it stops firing immediately, run history is retained. Refuses without `--yes` (gated: `cron.delete`, **approve** by default) |
+| `insta --agent cron preview <expression>` [`--json`] | validate an expression and print the next five fire times in UTC. Needs no project — use it before `create` rather than discovering a typo a day later |
 | `insta --agent secrets set <NAME> [value] [--branch <b>] [--service <compute/name>] [--json]` | Set a user secret (project-wide by default; value from stdin if omitted). `--service` scopes it to that branch's compute service (e.g. `compute/api`) — binding **requires a branch** (defaults to the current branch when `--service` is given); omit `--service` for an unbound secret (as before). **(CLI ≥ 0.0.78) Applies it, not just stores it**: the same command redeploys the compute services **on the target branch** that receive this secret — a stopped one is **started** by that redeploy (billed). The write scope and the deploy scope differ: a project-wide secret is *written* to every branch but *deployed* only on the branch this command targets (`--branch`, else the linked branch). Services on other branches print as `(other-branch)` and keep serving the old value until their own deploy or `compute restart` |
 | `insta --agent secrets unset <NAME> [--branch <b>] [--service <compute/name>] [--json]` | Remove a user secret. **`--service` (CLI ≥ 0.0.65)** removes **only that service's copy**, leaving a sibling's same-name value alone; without it the original name-keyed delete removes every matching copy at the scope. **(CLI ≥ 0.0.78) Applies it, not just stores it**: the same command redeploys the compute services **on the target branch** that received this secret — a stopped one is **started** by that redeploy (billed). Same scope split as `set`: a project-wide removal lands on every branch but redeploys only the target branch's services |
 | `insta --agent secrets sources` [`--branch <b>`] [`--json`] | List provider credential sources available for explicit compute binding, e.g. `postgres/db: DATABASE_URL` or `redis/cache: REDIS_URL, ...` (names only; gated: `secrets.read`) |
@@ -215,6 +223,47 @@ compute service; it is separate from provider credential binding (`secrets bind`
 **unchanged** — a binding still takes effect only on its own deploy or `compute restart` (see
 **Provider credentials** above). `secrets list`, `secrets tree`, `secrets
 sources`, and `secrets bindings` are all **names only** (`secrets list` covers what the removed `services secrets` used to answer, grouped by service).
+
+## Cron
+
+Scheduled HTTP calls owned by a branch. `cron_schedules` rows, not machines — nothing is provisioned
+and nothing is billed for the schedule itself; a run that wakes a scale-to-zero compute service bills
+that service's ordinary uptime, same as a request would.
+
+**Everything is UTC.** Five fields, one-minute floor. A schedule pinned to UTC does not keep a fixed
+local time, so a job written as `0 0 * * *` moves by an hour in any zone that observes DST — the
+console shows both readings for exactly this reason, and `cron preview` prints UTC so the two
+surfaces agree.
+
+Two target shapes:
+
+| target | resolution |
+|---|---|
+| `--service <name>` `--path </api/cron>` | the **service id** is stored, never a URL: the route is resolved at send time, so a redeploy or a region move between two runs is followed rather than papered over. The platform wakes a suspended service first and times that separately, so the request timeout covers your handler and not the cold start |
+| `--url <https://…>` | any external https endpoint. Private, loopback, link-local and cloud-metadata addresses are refused, and DNS is **pinned** between the check and the connection |
+
+Every send carries two headers the tenant's own headers cannot forge, because the platform writes
+them last:
+
+```
+insta-cron-run-id       stable across retries of the same run — dedupe on this
+insta-cron-attempt-id   different every attempt
+```
+
+**Make the handler idempotent on `insta-cron-run-id`.** Retries are real: a wake failure or a
+transport error is retried by the platform, and for a scale-to-zero service the wake and the request
+are deliberately not atomic — if the service sleeps again in between, the run is recorded `unknown`
+and is **not** retried, so the safe assumption is at-least-once delivery with a stable id.
+
+Run outcomes worth telling apart in `cron runs`:
+
+| status | meaning |
+|---|---|
+| `succeeded` | 2xx. Note `202` means the target accepted, not that async work finished |
+| `failed` | the target answered non-2xx, or the send was refused before it left (a blocked target, a paused schedule) |
+| `retry_wait` | a retryable failure, waiting out its backoff — still counts as an active run, so the next tick is skipped rather than overlapping |
+| `unknown` | the request went out and no complete answer came back. **Never retried**: the platform cannot tell a lost reply from work that ran. This is what the run id is for |
+| `skipped` | the previous run of this schedule had not finished. Schedules do not overlap by default |
 
 ## Volumes
 

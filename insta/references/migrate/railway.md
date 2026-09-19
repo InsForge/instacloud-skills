@@ -39,7 +39,7 @@ file, so "cd somewhere safe" is not isolation.
 | any other variable | `insta --agent secrets set KEY` |
 | a volume | `--volume <gi>` on `insta --agent service add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` when the machine is next created, so a `restart` is enough (see the `disk:` row in `migrate/render.md`), and download the source contents while its service still runs |
 | `numReplicas` | `insta --agent compute scale <n> X` (1 to 10, same region, paid plans) |
-| a cron service | **not supported yet** (the platform is expected to grow scheduling). Stopgaps, each needing something kept awake: `pg_cron` with `postgres always-on on`, an in-process scheduler in an always-on compute service, or scheduling from outside the platform |
+| a cron service | `insta cron create <name> '<expr>' --service <compute> --path </your/endpoint>`. The source's cron runs a **command**; this calls an **HTTP endpoint**, so the work moves into a route on a compute service you already have and the schedule calls it. No always-on needed — a scale-to-zero service is woken for the run. Expressions are **UTC**; check the source's timezone before copying one across. Make the handler idempotent on the `insta-cron-run-id` header: delivery is at-least-once |
 | multi-region replicas | not available. One region per service, chosen with `--region` at add time, or one region per template deployment with `insta --agent template deploy --region` |
 
 Railway's Postgres template is **18**, so step 3 is a downgrade. Its volumes carry the same caveat
