@@ -3,13 +3,15 @@ name: insta
 description: >
   Operate InstaCloud infrastructure with the `insta` CLI: create projects, add
   postgres/storage/compute services, deploy apps, create disposable branch
-  environments (isolated DB + storage + compute per branch), bind service
+  environments (isolated DB + storage + compute per branch), schedule recurring
+  HTTP calls (cron jobs) against a service or an external URL, bind service
   credentials into compute env, wire user secrets into `.env`, run multiple
   agents each in their own branch, handle governance
   approvals, check metrics/logs/usage, and promote branches to main. Use this
   skill when working in an InstaCloud-managed project (a `.insta/` dir or the
   `insta` CLI), when the user mentions InstaCloud or insta, AND when they ask to
-  deploy an app, need a database/backend/object storage, want preview or
+  deploy an app, need a database/backend/object storage, want a scheduled or
+  recurring task, want preview or
   per-agent sandbox environments, want branchable infrastructure, want to
   migrate an existing app in from Heroku / Railway / Fly / Render, or mention
   agent setup or MCP — even if they don't say "InstaCloud" explicitly. Also
@@ -280,8 +282,9 @@ usually enough, two at most:
 | Intent | Reference | Covers |
 | --- | --- | --- |
 | Create or connect things ("set up", "new project", "add a database/compute") | [setup.md](references/setup.md) | CLI install/upgrade, cloud vs oss target, auth, project, services, ship-from-zero |
+| Run something on a schedule ("every night", "cron job", "recurring task", "run this hourly") | [cli-reference.md](cli-reference.md#cron) | the `insta cron` commands, UTC-only expressions, service vs external targets, the run-id idempotency contract, and what each run status means |
 | Ship code or manage releases | [deploy.md](references/deploy.md) · framework recipes: [frameworks.md](references/frameworks.md) | image vs source (remote build), `--port` semantics, explicit service credential binding, secrets at runtime, verify procedure, Dockerfile templates, custom domains |
-| Migrate an existing app in ("migrate my Render/Railway service to InstaCloud", "move off Heroku/Railway/Fly/Render", "import my app", "bring my app over") | [migrate.md](references/migrate.md) **plus** the one source file you need from `references/migrate/` (`render.md`, `railway.md`, `fly.md`, `insforge.md`) | the ordered cutover with pass conditions and its rollback boundary, the InstaCloud-side semantics that bite (a binding needs a deploy, no bulk env import, no cron, workers), command + addon mapping, per-source (each source now has its own file, read alongside migrate.md not instead of it) deltas |
+| Migrate an existing app in ("migrate my Render/Railway service to InstaCloud", "move off Heroku/Railway/Fly/Render", "import my app", "bring my app over") | [migrate.md](references/migrate.md) **plus** the one source file you need from `references/migrate/` (`render.md`, `railway.md`, `fly.md`, `insforge.md`) | the ordered cutover with pass conditions and its rollback boundary, the InstaCloud-side semantics that bite (a binding needs a deploy, no bulk env import, cron is HTTP-not-command, workers), command + addon mapping, per-source (each source now has its own file, read alongside migrate.md not instead of it) deltas |
 | Branch environments, parallel agents, promotion ("preview env", "sandbox per task", "merge to main") | [branching.md](references/branching.md) | **the data-forking env model** (what actually clones), branch loop, 1:1:1 worktree pattern + dispatch brief, promotion, migration discipline |
 | Approvals, policy, audit, credential scanning | [governance.md](references/governance.md) | gates catalog, the approval relay, events timeline, observe hook, agent audit patterns |
 | Check health or debug failures | [operate.md](references/operate.md) | status/manifest triage, ordered deploy-failure list, metrics/logs, cloud-vs-oss differences |
