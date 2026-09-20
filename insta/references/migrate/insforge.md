@@ -311,7 +311,9 @@ branch's DSN, and must differ from main's.
 ```bash
 insta --agent secrets --print --json --service compute/api --branch fix-urls | jq -r .POSTGRES_HOST
 insta --agent postgres url "$PG" --branch fix-urls | sed -E 's#^([a-z+]+://)[^@]*@#\1***@#'
-``` Then work out the update against
+```
+
+Then work out the update against
 the branch's database, read `ENCRYPTION_KEY` from the service's own secrets rather than retyping it, write only
 the two named rows, and confirm by calling a function that reads `INSFORGE_BASE_URL` rather than by selecting the
 plaintext back. Only once that passes, repeat it on `main` with `--branch main`.

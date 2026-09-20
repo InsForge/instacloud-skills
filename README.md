@@ -47,10 +47,12 @@ insta/
     ├── setup.md          CLI install, auth, a first project and its services
     ├── deploy.md         source and image deploys, ports, custom domains
     ├── frameworks.md     deploy recipes per framework
+    ├── storage.md        S3-compatible buckets: credentials, reading and writing objects, the traps
     ├── branching.md      branch environments and the data that comes with them
     ├── governance.md     approvals, policy, the credential audit
     ├── operate.md        status, triage and recovery
     ├── migrate.md        moving an app in from Heroku/Railway/Fly/Render: the ordered cutover
+    ├── migrate/          what each source adds to that cutover: render.md, railway.md, fly.md, insforge.md
     └── mcp.md            the remote insta-cloud MCP server
 ```
 
