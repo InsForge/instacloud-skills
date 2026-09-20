@@ -31,7 +31,7 @@ confirm it matches the server's listen port.
 
 ## How source mode builds (what actually happens)
 
-The CLI first asks the platform which lane serves the target service, then follows it. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta upgrade` and retry.
+The CLI first asks the platform which lane serves the target service, then follows it. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta --agent upgrade` and retry.
 
 **insta-compute service (the default plane for new services):**
 
