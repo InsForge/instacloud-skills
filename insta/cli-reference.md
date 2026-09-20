@@ -224,7 +224,7 @@ standalone resource (nothing to create or list separately; it lives and dies wit
 - **postgres** has one by default — view/grow only: `insta --agent postgres volume` [`--size <Gi>`].
 - **compute** opts in at creation (`insta --agent service add compute <name> --volume <gi>`) **or any
   time later** (`insta --agent compute volume <name> --size <gi>` on a volumeless service attaches one;
-  the disk mounts when the machine is next created: the **next deploy, or `insta --agent compute restart`**). Mount path defaults to **`/data`**; add `--mount-path /app/storage` to either creation or attachment to choose it. The path is fixed after attachment and survives deploys and restarts. Configure the application to use that directory; existing container files are not migrated. Constraints: machine count stays **1** (scale to 1 before attaching), idle
+  the disk mounts when the machine is next created: the **next deploy, or `insta --agent compute restart`**). Mount path defaults to **`/data`**; add `--mount-path /app/storage` to either creation or attachment to choose it. The configured path survives deploys and restarts. Changes to an existing path are staged until the next deploy. Configure the application to use that directory; existing container files are not migrated. Constraints: machine count stays **1** (scale to 1 before attaching), idle
   scale-to-zero uses **stop** (cold wake) instead of suspend, and a volume **never detaches** —
   but it **can be deleted** (`insta --agent compute volume <name> --delete`): the disk and **all its
   data** are destroyed immediately (irreversible — download anything you need first), billing
@@ -244,7 +244,9 @@ insta --agent compute volume web --size 1 --mount-path /app/storage
 insta --agent compute restart web
 ```
 
-`--mount-path` requires `--volume` on creation or `--size` on attachment. Omit it on resize to preserve the existing path. Managed database paths remain platform-controlled. The path cannot be changed after attachment in Phase 1. Invalid or reserved paths are rejected by the platform.
+`--mount-path` requires `--volume` on creation. On an existing volume, `insta --agent compute volume web --mount-path /app/storage` stages a path-only change without creating or resizing the disk. The response reports the configured path, `appliedMountPath` and `pending`; an unchanged normalized path is a no-op. Run Deploy (or `insta --agent compute restart web`) to apply it. This stops the application, mounts the same volume at the new path, and starts it again. Data and permissions stay on the original volume. Failed deployments report failure and attempt to restore the previous runtime configuration; inspect the error if recovery also fails.
+
+Application configuration is **not** rewritten automatically. In Console, stage the mount path together with environment variables and the Startup Command, then Deploy once. Startup Command runs through `sh -c`; leave it empty to use the image default. Avoid deploying new database settings against the old mount path. Omit `--mount-path` on resize to preserve the configured path. Managed database paths remain platform-controlled. Invalid or reserved paths are rejected by the platform.
 
 ## Environments
 
