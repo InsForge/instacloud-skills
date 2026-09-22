@@ -246,6 +246,8 @@ insta --agent compute restart web
 
 `--mount-path` requires `--volume` on creation. On an existing volume, `insta --agent compute volume web --mount-path /app/storage` stages a path-only change without creating or resizing the disk. The response reports the configured path, `appliedMountPath` and `pending`; an unchanged normalized path is a no-op. Run Deploy (or `insta --agent compute restart web`) to apply it. This stops the application, mounts the same volume at the new path, and starts it again. Data and permissions stay on the original volume. Failed deployments report failure and attempt to restore the previous runtime configuration; inspect the error if recovery also fails.
 
+Use `insta --agent compute start-command web --set 'exec docker-entrypoint.sh postgres -D /app/storage/pg'` to stage a startup command, `--clear` to restore the image default, or no flag to read it. This command supports `--branch` and `--json`. Stage the mount path, command, and variables before deploying once.
+
 Application configuration is **not** rewritten automatically. In Console, stage the mount path together with environment variables and the Startup Command, then Deploy once. Startup Command runs through `sh -c`; leave it empty to use the image default. Avoid deploying new database settings against the old mount path. Omit `--mount-path` on resize to preserve the configured path. Managed database paths remain platform-controlled. Invalid or reserved paths are rejected by the platform.
 
 ## Environments
