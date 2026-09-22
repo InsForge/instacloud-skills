@@ -41,6 +41,7 @@ deletes secrets and bindings scoped to it; unbound and project-wide secrets are 
 | postgres (each) | copy-on-write DB branch | **the parent's data**, isolated — writes never touch the parent |
 | storage (each) | copy-on-write bucket fork | **the parent's objects**, isolated |
 | compute (each group) | a fresh isolated app + URL per group | **the parent's persisted image, if it has one**, already running — `branch.ts` carries `image`/`port`/`always_on` onto the child and boots it with the branch's own secret bundle. A parent never deployed has no image, so that clone is an empty, unreachable app until you deploy to it |
+| cron schedules | **not cloned** | a new branch has **no** schedules, whatever the parent has. A schedule belongs to one branch and stays there: none is copied on create or fork, none is migrated on merge or promotion, and all of a branch's schedules are **deleted with the branch**. So a job that must survive promotion has to be created on the branch that survives — usually `main` — and a branch under test does not double-fire its parent's jobs, which is the reason it works this way |
 | user secrets + compute credential bindings | parent's branch-scoped `secrets set` values and `secrets bind` rules | copied to the new branch with service ids remapped |
 
 Three consequences to internalize:
