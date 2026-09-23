@@ -172,7 +172,8 @@ InstaCloud-managed zone and it serves:
 
 ```bash
 insta --agent domain delegate myapp.com   # CLI ≥ 0.1.3; org admin. Policy decides (see below); 202 approval_required is relayed, not an error
-insta --agent domain status myapp.com     # hostnames re-verify on their own; no re-attach
+insta --agent domain status myapp.com     # pending hostnames re-verify on their own — no re-attach for those
+insta --agent domain attach myapp.com     # ONLY if status still shows the apex `failed` (e.g. it hit the 48h deadline before you delegated): failed is terminal until retried
 ```
 
 Whether it runs or waits is the project's agent policy, exactly as with `buy`: `full_access`, which
