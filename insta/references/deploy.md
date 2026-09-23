@@ -141,7 +141,9 @@ insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
 insta --agent domain buy myapp.com --no-open       # CLI ≥ 0.0.80 — → a Stripe Checkout URL to relay
 insta --agent domain status myapp.com              # CLI ≥ 0.0.80 — poll until the order is registered
 insta --agent domain attach myapp.com              # CLI ≥ 0.0.80 — bind it, and its www
-insta --agent domain status myapp.com              # poll until active
+insta --agent domain status myapp.com              # poll until www serves — the APEX stays pending here
+insta --agent domain delegate myapp.com            # CLI ≥ 0.1.3 — the apex verifies only on a managed zone (details below)
+insta --agent domain status myapp.com              # poll until every hostname you bound is active
 ```
 
 Three things to get right as an agent:
@@ -162,6 +164,34 @@ inventory until you say what it should serve. The domain belongs to the **org**:
 can attach a hostname, and `domain list` shows the org's whole inventory. `domain attach myapp.com` binds `myapp.com` **and**
 `www.myapp.com`; the platform publishes the DNS in the zone it controls, so there are no records for
 you to add.
+
+**The apex needs the managed zone.** Only `www` (and other subdomains) can verify while the zone
+sits at the registrar: the apex flattens to shared proxy addresses no certificate is issued for, so
+`myapp.com` itself stays `pending` and eventually fails. Move the domain's DNS onto an
+InstaCloud-managed zone and it serves:
+
+```bash
+insta --agent domain delegate myapp.com   # CLI ≥ 0.1.3; org admin. Policy decides (see below); 202 approval_required is relayed, not an error
+insta --agent domain status myapp.com     # pending hostnames re-verify on their own — no re-attach for those
+insta --agent domain attach myapp.com     # ONLY if status still shows the apex `failed` (e.g. it hit the 48h deadline before you delegated): failed is terminal until retried
+```
+
+Whether it runs or waits is the project's agent policy, exactly as with `buy`: `full_access`, which
+a new project starts on, allows `domain.delegate` outright — **the delegation just executes, no
+approval stands in the way** — `branch_specific` answers `approval_required` (relay that line),
+`read_only` refuses. That gate is read from the linked project; a project-less credential (an
+`insta_` key, an MCP assertion) is judged on the whole org instead — org admin plus **every**
+project in the org on `full_access` executes it with no gate at all, and anything less is refused
+with a misleading `project.billing.update` denial. Run it from the linked project.
+
+Records are copied first — the platform's and yours — and the nameservers switch after, so a
+serving `www` stays up (a domain carrying the customer's own MX/SPF keeps serving them, but the
+`records` API is closed while managed, so their DNS cannot be *edited* until the reset — surface
+that trade-off before delegating a domain with live mail); a hostname that had failed *because*
+the zone was delegated away revives by itself. First-time registry propagation can take ~15–20 min
+(17 measured on the first live delegation, 2026-09-22). The way back is
+`insta domain nameservers reset myapp.com` — agent credentials answer 403 on the nameserver verbs,
+so relay that exact command to the user rather than running it.
 
 Any subdomain works, and each one is its own call, so one name can serve several services:
 
