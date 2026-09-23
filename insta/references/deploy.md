@@ -169,14 +169,18 @@ sits at the registrar: the apex flattens to shared proxy addresses no certificat
 InstaCloud-managed zone and it serves:
 
 ```bash
-insta --agent domain delegate myapp.com   # CLI ≥ 0.1.3; org admin. Gated domain.delegate — relay a 202 approval_required
+insta --agent domain delegate myapp.com   # CLI ≥ 0.1.3; org admin. From a CLI agent session: gated domain.delegate — relay a 202 approval_required
 insta --agent domain status myapp.com     # hostnames re-verify on their own; no re-attach
 ```
 
+(The 202 path exists only for a project-linked CLI agent session; a project-less `insta_` key or
+MCP credential is denied on the org-wide path instead — run this from the linked project.)
+
 Records are copied first — the platform's and yours — and the nameservers switch after, so a
 serving `www` stays up; a hostname that had failed *because* the zone was delegated away revives by
-itself. First-time registry propagation can take ~15–20 min. `insta --agent domain nameservers reset`
-puts the zone back on the registrar.
+itself. First-time registry propagation can take ~15–20 min. The way back is
+`insta domain nameservers reset myapp.com` — agent credentials answer 403 on the nameserver verbs,
+so relay that exact command to the user rather than running it.
 
 Any subdomain works, and each one is its own call, so one name can serve several services:
 
