@@ -163,6 +163,21 @@ can attach a hostname, and `domain list` shows the org's whole inventory. `domai
 `www.myapp.com`; the platform publishes the DNS in the zone it controls, so there are no records for
 you to add.
 
+**The apex needs the managed zone.** Only `www` (and other subdomains) can verify while the zone
+sits at the registrar: the apex flattens to shared proxy addresses no certificate is issued for, so
+`myapp.com` itself stays `pending` and eventually fails. Move the domain's DNS onto an
+InstaCloud-managed zone and it serves:
+
+```bash
+insta domain delegate myapp.com   # CLI ≥ 0.1.3; org admin. Agent mode: gated domain.delegate — relay a 202 approval_required
+insta domain status myapp.com     # hostnames re-verify on their own; no re-attach
+```
+
+Records are copied first — the platform's and yours — and the nameservers switch after, so a
+serving `www` stays up; a hostname that had failed *because* the zone was delegated away revives by
+itself. First-time registry propagation can take ~15–20 min. `insta domain nameservers reset`
+puts the zone back on the registrar.
+
 Any subdomain works, and each one is its own call, so one name can serve several services:
 
 ```bash
