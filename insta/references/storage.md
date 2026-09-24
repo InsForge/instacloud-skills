@@ -139,7 +139,7 @@ insta --agent storage delete <key>              # immediate and irreversible, no
 ```
 
 The console's storage service detail browses the same objects with preview, download, and single or
-bulk delete. Agents get `insta_storage_list` / `insta_storage_download_url` / `insta_storage_delete`
+bulk delete. Agents get `insta_list_storage_objects` / `insta_get_storage_download_url` / `insta_delete_storage_object`
 over MCP — note the download tool returns a **URL, not bytes**.
 
 Every path is governed (see [governance.md](governance.md)):
