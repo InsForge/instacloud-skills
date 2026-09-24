@@ -101,7 +101,8 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent compute scale` | `insta_scale_service` |
 | `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_set_compute_state` / `insta_get_service_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
 | `insta --agent compute exec [service] -- <command>` | `insta_exec_compute_command` (`name?`/`branch?`/`command`/`timeoutSec?`) |
-| `insta --agent compute limits/always-on/volume` (same shape under `redis\|mysql\|mongodb`) | `insta_get_service` (read: limits, always-on state, volume) / `insta_update_service` (write: `alwaysOn`, `memoryMb`, `cpu`, `volumeGib`, `volumeMountPath`, one restart) / `insta_delete_service_volume` (compute only, destructive, deletes the disk and its data) |
+| `insta --agent compute limits/always-on/volume` (same shape under `redis\|mysql\|mongodb`) | `insta_get_service` (read: limits, always-on state, start command, volume) / `insta_update_service` (write: `alwaysOn`, `startCommand`, `memoryMb`, `cpu`, `volumeGib`, `volumeMountPath`, one restart. `alwaysOn`/`startCommand` gated `deploy`, the rest gated `service.upgrade`) / `insta_delete_service_volume` (compute only, destructive, deletes the disk and its data) |
+| `insta --agent compute start-command` | `insta_update_service` (`startCommand` field, gated `deploy`) |
 | `insta --agent domain attach/check/detach` | `insta_attach_domain` / `insta_check_domain` / `insta_detach_domain` |
 | `insta --agent branch create/list/merge/delete` | `insta_create_branch` / `insta_list_branches` / `insta_merge_branch` / `insta_delete_branch` |
 | `insta --agent agent manifest` | `insta_get_agent_manifest` (env view — **no secret values**) |
