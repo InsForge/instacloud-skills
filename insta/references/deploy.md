@@ -134,6 +134,27 @@ insta --agent domain check app.example.com                    # status once DNS 
 
 The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).
 
+**Or delegate the whole BYO domain** (CLI ≥ 0.1.4, platform BYO zones) — point the domain's
+nameservers at an InstaCloud-managed zone once, and every later attach publishes its own records,
+**apex included** (the records path above cannot serve a BYO apex; delegation can):
+
+```bash
+insta --agent domain zone delegate example.com   # org admin; gated: zone.delegate — same policy shape as domain.delegate
+insta --agent domain zone records example.com    # REVIEW before switching: the scan that seeded the zone is a heuristic
+# … add anything missing at your CURRENT DNS provider, re-run `zone delegate` to re-import, THEN
+# set the two printed nameservers at the domain's registrar …
+insta --agent domain zone list                   # `waiting for nameservers` → `delegated` once the registry answers
+insta --agent domain attach example.com          # records land in the zone by themselves now — apex and all
+```
+
+Three sharp edges, all deliberate: a domain carrying **live MX records is refused** (a DNS move
+that can drop mail is never implicit — move mail first or stay on the records path; relay the
+refusal sentence, it names the fix); the **review-then-switch contract is the safety of the whole
+flow** — records the scan missed (uncommon types: SRV, CAA, DKIM at odd names) drop at the
+nameserver switch unless the review catches them first; and `zone release` is the way back (the
+platform prunes what it published, deletes the zone, and the printed next step is re-pointing the
+nameservers — hostnames then re-verify on the records path).
+
 **You want to buy one** — InstaCloud registers it and owns the zone; you say what it serves:
 
 ```bash

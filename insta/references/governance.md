@@ -30,6 +30,7 @@ The unprotected-branch defaults are:
 | `storage.delete`, `db.restore`, explicitly classified `db.destructive` | **approve** | deletion/restoration |
 | `domain.purchase` | **approve** | `insta domain buy` — it spends the org's money at a registrar, and a registration is non-refundable. Approval only unblocks the order: the human still has to pay the Stripe Checkout link it answers |
 | `domain.delegate` | **approve** | `insta domain delegate` — moves a bought domain's DNS onto an InstaCloud-managed zone: a registrar-level nameserver change with org-wide blast radius, and the `records` API closes until a `nameservers reset`. Read from the linked project's session; the platform additionally requires org admin |
+| `zone.delegate` | **approve** | `insta domain zone delegate` / `zone release` — a BYO domain onto (or off) an InstaCloud-managed zone: the customer's own nameserver cutover rides on it, with org-wide blast radius. Read from the linked project's session; the platform additionally requires org admin |
 | `agent_policy.update`, `branch.protection.update`, project administration | **deny** | an agent cannot loosen its own restrictions |
 
 Decisions: `allow` (proceed) · `deny` (hard no) · `approve` (human in the loop).
