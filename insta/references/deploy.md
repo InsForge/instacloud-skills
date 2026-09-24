@@ -143,7 +143,7 @@ insta --agent domain zone delegate example.com   # org admin; gated: zone.delega
 insta --agent domain zone records example.com    # REVIEW before switching: the scan that seeded the zone is a heuristic
 # … add anything missing at your CURRENT DNS provider, re-run `zone delegate` to re-import, THEN
 # set the two printed nameservers at the domain's registrar …
-insta --agent domain zone list                   # awaiting nameservers → delegated once the registry answers
+insta --agent domain zone list                   # `waiting for nameservers` → `delegated` once the registry answers
 insta --agent domain attach example.com          # records land in the zone by themselves now — apex and all
 ```
 
