@@ -28,7 +28,7 @@ itself, along with the `insta --agent agent observe` credential-audit hook — s
 To install the skill on its own:
 
 ```bash
-npx skills add InsForge/insta-skills -s insta
+npx skills add InsForge/instacloud-skills -s insta
 ```
 
 Or copy it into your agent's skills directory:
@@ -68,8 +68,8 @@ InstaCloud runs two separate deployments, and each gets its own branch of this r
 
 | Environment | Skill source |
 |---|---|
-| `prod` | `InsForge/insta-skills` (`main`) |
-| `staging` | `InsForge/insta-skills#devel` |
+| `prod` | `InsForge/instacloud-skills` (`main`) |
+| `staging` | `InsForge/instacloud-skills#devel` |
 
 `insta --agent agent setup` installs prod's skill text by default — bare `agent setup` always targets
 prod (CLI ≥ 0.0.38), switching a staging-leftover machine back. `insta --agent agent setup --env staging`
