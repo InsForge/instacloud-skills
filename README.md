@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg)](LICENSE)
 
 The `insta` agent skill: what a coding agent needs to know to run cloud infrastructure
-through [InstaCloud](https://github.com/InsForge/insta-cli) — provisioning services,
+through [InstaCloud](https://github.com/InsForge/instacloud-cli) — provisioning services,
 deploying apps, forking a whole environment per branch, wiring credentials into an app,
 passing governance approvals, and giving several agents a sandbox each.
 
@@ -58,7 +58,7 @@ insta/
 
 `SKILL.md` is what the agent loads first; it routes to a reference when a task needs the
 detail. `cli-reference.md` is the canonical description of the CLI surface — the
-[insta-cli](https://github.com/InsForge/insta-cli) repo links here for flags rather than
+[instacloud-cli](https://github.com/InsForge/instacloud-cli) repo links here for flags rather than
 keeping a second copy, and a command or flag change there is not finished until it lands
 here.
 
