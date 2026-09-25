@@ -119,6 +119,7 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | storage browse/download/delete | `insta_storage_list` / `insta_storage_download_url` / `insta_storage_delete` (no upload yet) |
 | `insta --agent template list/info/deploy` (`--region <r>` on `deploy` only) | `insta_template_search` / `insta_template_get` / `insta_template_deploy` (`region` parameter, slugs from `insta_regions`) / `insta_template_deployment_status` |
 | `insta --agent feedback` | `insta_feedback` (same fields; pass `projectId`/`branch` explicitly — see [cli-reference.md → Feedback](../cli-reference.md#feedback)) |
+| `insta --agent feedback status <ticket-id>` | `insta_feedback_status` (`ticketId` from `insta_feedback`'s `ticket.id`; status only — the replies are in the console) |
 
 ## Behavior that carries over from the CLI
 
