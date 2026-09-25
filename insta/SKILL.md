@@ -125,7 +125,11 @@ The same commands drive both. Resolve which one you're on from `insta --agent st
 - **InstaCloud (managed cloud)** — requires `insta --agent login` (agents: `--email/--password` or an API
   token; humans: bare `insta --agent login` opens the console sign-in/approval page in the browser — any
   account type; headless machine with a human reachable elsewhere: `--device` prints a link + code
-  they approve from any other browser).
+  they approve from any other browser). **CI and long-lived automations use a scoped API token**:
+  `insta --agent tokens create <name> --org <id>` (or `--project <id>`), then `insta --agent login --api-key <insta_…>`
+  — never an account-wide token. A `403 token_scope` from any command means the credential is narrower
+  than the call, not that a role is missing; mint a wider token from an account login instead of
+  touching memberships (see [cli-reference.md](cli-reference.md#commands)).
 - **insta-oss (self-hosted local daemon)** — `INSTA_API_URL=http://127.0.0.1:8080` (its default).
   **No login exists or is needed** (localhost trust, builtin `local` user); billing/usage/metrics
   return clear "cloud-only" errors — don't retry them.
@@ -357,8 +361,9 @@ contract, skill/doc text that doesn't match reality, a missing capability, confu
 it with `insta --agent feedback` (or the `insta_send_feedback` MCP tool), **then continue the user's task with
 a workaround**. Never block on the report, and **never file feedback for problems in the app the
 user is building** — this channel is only for the InstaCloud toolkit
-(`--component cli|mcp|platform|skills|docs`). Full flags and the situation → type mapping:
-[cli-reference.md → Feedback](cli-reference.md#feedback).
+(`--component cli|mcp|platform|skills|docs`). The team replies in the console, where the user reads
+and answers; **(CLI ≥ 0.1.7)** you only get the ticket's link and, on request, its status. Full flags and the
+situation → type mapping: [cli-reference.md → Feedback](cli-reference.md#feedback).
 
 ## Response format
 
