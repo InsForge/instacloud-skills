@@ -362,7 +362,7 @@ it with `insta --agent feedback` (or the `insta_feedback` MCP tool), **then cont
 a workaround**. Never block on the report, and **never file feedback for problems in the app the
 user is building** — this channel is only for the InstaCloud toolkit
 (`--component cli|mcp|platform|skills|docs`). The team replies in the console, where the user reads
-and answers; you only get the ticket's link and, on request, its status. Full flags and the
+and answers; **(CLI ≥ 0.1.7)** you only get the ticket's link and, on request, its status. Full flags and the
 situation → type mapping: [cli-reference.md → Feedback](cli-reference.md#feedback).
 
 ## Response format
