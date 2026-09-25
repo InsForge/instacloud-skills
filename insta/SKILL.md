@@ -149,7 +149,7 @@ Fall back to the **remote MCP tools** (`insta_*`) only when the CLI can't be inv
 (the common case is fixable with no CLI on PATH: `npx -y insta@latest --agent agent setup -y`
 self-installs it — see self-heal below). Same platform API, same governance gates, same audit
 trail — but MCP tools take **explicit `projectId`/`branch` args**: never assume the CLI's linked
-context carries over; resolve IDs first (`insta_project_list`) and pass them explicitly. Full
+context carries over; resolve IDs first (`insta_list_projects`) and pass them explicitly. Full
 mapping + connection guide: **[mcp.md](references/mcp.md)**.
 
 **Self-heal:** if the insta skill or the `insta_*` MCP tools are expected but missing, run
@@ -294,7 +294,7 @@ usually enough, two at most:
 | Check health or debug failures | [operate.md](references/operate.md) | status/manifest triage, ordered deploy-failure list, metrics/logs, cloud-vs-oss differences |
 | Command lookup | [cli-reference.md](cli-reference.md) | the full CLI catalog with flags and gates |
 | Remote MCP tools ("connect a connector", `insta_*` tools available) | [mcp.md](references/mcp.md) | connecting clients, tool ↔ CLI mapping, what stays CLI-only |
-| InstaCloud itself got in your way (bug, stale doc, missing feature, friction) | [cli-reference.md → Feedback](cli-reference.md#feedback) | `insta --agent feedback` / `insta_feedback`: when to file, situation → type mapping |
+| InstaCloud itself got in your way (bug, stale doc, missing feature, friction) | [cli-reference.md → Feedback](cli-reference.md#feedback) | `insta --agent feedback` / `insta_send_feedback`: when to file, situation → type mapping |
 
 If a request spans two areas ("deploy and check it's healthy"), load both and answer once.
 
@@ -358,7 +358,7 @@ beyond either is a 403 — `insta --agent billing subscribe` first; `insta --age
 
 If you hit a hurdle that is **InstaCloud's fault** — a command that violates its documented
 contract, skill/doc text that doesn't match reality, a missing capability, confusing UX — report
-it with `insta --agent feedback` (or the `insta_feedback` MCP tool), **then continue the user's task with
+it with `insta --agent feedback` (or the `insta_send_feedback` MCP tool), **then continue the user's task with
 a workaround**. Never block on the report, and **never file feedback for problems in the app the
 user is building** — this channel is only for the InstaCloud toolkit
 (`--component cli|mcp|platform|skills|docs`). The team replies in the console, where the user reads
