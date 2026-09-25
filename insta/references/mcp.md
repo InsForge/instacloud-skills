@@ -25,6 +25,7 @@ client. **The CLI is the only path** for the things a remote server cannot or mu
 | `insta --agent deploy <dir>` (source builds) | needs a local build context; `insta_deploy` takes prebuilt image URLs only |
 | `insta --agent agent observe` hook / `insta --agent agent setup` | local-machine operations |
 | `insta --agent postgres limits` (database machine spec) | not yet exposed as an MCP tool |
+| `insta --agent compute scale --remove <instance>` (drop one named instance) | not yet exposed as an MCP tool; `insta_scale_service` sets a count only |
 
 ## Connecting
 
