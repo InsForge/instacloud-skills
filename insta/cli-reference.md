@@ -554,12 +554,13 @@ never block on the report, and never file feedback for problems in the app the u
 
 **(CLI ≥ 0.1.5)** Signed in to InstaCloud (a session or an `insta_` key), the report opens a support
 ticket, and the team's reply reaches the user in the console's Support — unless it warns `could not
-confirm who you are`, in which case the report is stored but opens no ticket. **(CLI ≥ 0.1.7)** It
-prints the ticket's id and its console link (`ticket: {id, url}` under `--json`); give the link to the
-user, who reads and answers the replies there. `insta --agent feedback status <ticket-id>` tells you
-only where the ticket stands — ask when the user wants to know; do not poll it. Signed out, it
+confirm who you are`, in which case the report is stored but opens no ticket. Signed out, it
 **refuses with exit 2** (`{"status":"refused"}` under `--json`): run `insta --agent login`, then send it
 again. From staging it always refuses. On insta-oss it sends without an identity and opens no ticket.
+**(CLI ≥ 0.1.7)** The report prints the ticket's id and its console link (`ticket: {id, url}` under
+`--json`); give the link to the user, who reads and answers the replies there.
+`insta --agent feedback status <ticket-id>` tells you only where the ticket stands — run it when the
+user asks; do not poll it.
 
 ```bash
 insta --agent feedback --json --type bug --component cli --area deploy \
