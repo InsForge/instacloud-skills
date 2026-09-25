@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Two render-breaking defects in this repo's markdown, both of which have shipped before.
+"""Two render-breaking defects in this repo's markdown.
 
 Neither is visible in a diff and neither shows up in prose review: a dropped code-fence closer turns
 the next ~90 lines of guidance into one grey block, and a raw `|` inside a table cell silently
-truncates the rest of that row from the rendered output. The second one cost the `domain records`
-row its 403-agent-credentials warning; the first one has now landed twice at the same spot in
-migrate/insforge.md.
-
-Both are mechanical, so they belong here rather than in a third human review.
+truncates the rest of that row from the rendered output. Both are mechanical, so they belong here
+rather than in a human review.
 """
 import pathlib
 import re
@@ -22,8 +19,7 @@ for path in sorted(pathlib.Path(".").rglob("*.md")):
     lines = path.read_text(encoding="utf-8").split("\n")
 
     # 1. Fence pairing. A CLOSER must carry nothing after its run of backticks — ``` followed by
-    #    prose opens a new block instead of closing one, which is exactly how the insforge.md
-    #    regression reads.
+    #    prose opens a new block instead of closing one.
     open_at = None
     marker = ""
     marker_len = 0
