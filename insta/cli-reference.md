@@ -276,9 +276,11 @@ set`) reaches the next run with no edit to the job. Only secrets you set resolve
 credentials (`DATABASE_URL`, storage `AWS_*`, …) do not. A header may be a literal or a ref, not both.
 An unresolvable ref fails the attempt as `secret_not_found` (retried as a platform failure, then the
 run is `failed`); `secret_resolver_error` is transient and retried — both ride the same **wake** retry
-bucket above, not a third category. `create`/`edit` check the secret **name**'s shape (400 if
-malformed) but not whether it exists — a typo'd name is accepted and only surfaces once a run resolves
-it and fails. Keep `--header` for non-secret values.
+bucket above, not a third category. A resolved value that is empty or not plain ASCII (`secrets set
+NAME ''` is accepted; there is no minimum length) fails instead as `illegal_secret_value` — **not**
+retried, terminal on the first attempt, since re-sending would not change the value. `create`/`edit`
+check the secret **name**'s shape (400 if malformed) but not whether it exists — a typo'd name is
+accepted and only surfaces once a run resolves it and fails. Keep `--header` for non-secret values.
 
 **An edit replaces the request; it does not merge it.** See the `cron edit` row above: because literal
 header values can never be read back, restating one header is not "changing one header" — it is
