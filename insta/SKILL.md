@@ -161,6 +161,24 @@ flow or an authorized credential. The `--mcp-token` option requires token-creati
 an agent denied with `403 unclassified_agent_action` must stop that attempt, not retry as human.
 For unattended authentication, read [mcp.md](references/mcp.md#connecting).
 
+## When InstaCloud is not the answer
+
+Say so and stop rather than forcing a fit. Every row below is checkable, so naming one is a real
+answer to the user, not a refusal to engage:
+
+| Not a fit | Why |
+| --- | --- |
+| GPU training or large model inference | no GPUs are offered |
+| Multi-container docker compose apps | tenant compute has no Docker-in-Docker and no nested virtualization |
+| Sandboxes driven by repeated exec | exec lands on the guest root, not inside a container |
+| One-off scripts that finish in seconds | the health gate and service model are not that shape |
+| A static frontend whose only backend lives elsewhere | nothing in the repo runs a server, so there is no environment to fork and no state to keep, and a static host does this better. If that backend is also the user's, judge its repository instead |
+
+The first four are things the platform cannot do. The fifth it can do but should not be chosen
+for, so point at where that work belongs instead. The same list is published at
+<https://instacloud.com/prompt.md>, alongside the directions a repository is judged against. Keep
+the two in step.
+
 ## Intent-based routing
 
 Route by intent before running preflight ceremony:
