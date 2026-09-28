@@ -270,6 +270,6 @@ isn't "done" until `agent manifest`/`agent events` reflect it.
 | usage / billing | real (billing dimensions) | 501 — no billing locally |
 | metrics / logs | served (compute full, postgres limited) | 501 today (docker-stats planned) |
 | source deploy (`deploy <dir>`) | ✅ remote build | not yet — use `--image` |
-| service add postgres/storage | ✅ (≤5 each) | 501 — one of each, auto-provisioned |
+| service add postgres/storage | ✅ (plan cap per type) | 501 — one of each, auto-provisioned |
 | branch compute | parent's image, already running | parent's image, redeployed asleep |
 | branch app URL | own subdomain | host port +1000 |

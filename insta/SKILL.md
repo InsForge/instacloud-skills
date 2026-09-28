@@ -73,7 +73,8 @@ types you build directly against are:
 **A new project starts empty** — no services are created automatically. Add what you need:
 `insta --agent service add postgres <name>`, `insta --agent service add compute <name>`,
 `insta --agent service add storage <name>`, `insta --agent service add redis <name>`, etc. A project may have
-**multiple services of every type** (up to 5 per type). Provider credentials are scoped to the
+**multiple services of every type**, up to a per-branch cap per type set by the plan (see
+[cli-reference.md](cli-reference.md)). Provider credentials are scoped to the
 service that minted them and use canonical names inside that scope (`DATABASE_URL`, `REDIS_URL`,
 `MYSQL_URL`, `MONGODB_URL`, `AWS_ACCESS_KEY_ID`, `BUCKET_NAME`, …). The **local-dev seam**
 (`insta --agent secrets` → `.env`, `insta --agent run`) carries one set per type, from that type's
