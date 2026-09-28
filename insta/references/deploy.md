@@ -116,6 +116,12 @@ app's expected status) → report deployed **with the URL**. Anything else → t
 
 ## Deploy gotchas (each has burned real deploys)
 
+- **The public URL waits 60 s for response headers, then answers 502.** Not tunable. Once headers are
+  sent the body can stream for as long as it likes, so a slow endpoint either sends headers early
+  (stream or SSE) or goes async: answer `202` with a job id and let the client poll.
+- **A `rediss://` `REDIS_URL` needs SNI.** It points at a shared TLS port that routes on the
+  handshake's hostname and drops one without it, and ioredis sends none from a bare URL:
+  `new Redis(url, { tls: { servername: new URL(url).hostname } })`.
 - **Never gate container startup on migrations.** `CMD migrate && server` + a hung migration =
   a "successful" deploy that serves nothing, with empty logs. Run migrations non-blocking:
   `timeout 30 <migrate> || echo skipped; <start-server>`.

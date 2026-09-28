@@ -109,7 +109,7 @@ Compute volumes are **not create-time only**. Use `--volume <Gi>` when adding a 
 you already know it needs durable `/data`, or run `insta --agent compute volume <service> --size <Gi>` later
 on a volumeless service to attach one. The volume appears when the machine is next created: the next deploy, or `insta --agent compute restart` (measured; no rebuild needed).
 
-Up to 5 services per type. Provider credentials are minted under the service that owns them with
+Up to a per-branch cap per type set by the plan (see [cli-reference.md](../cli-reference.md)). Provider credentials are minted under the service that owns them with
 canonical names (`DATABASE_URL`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `REDIS_URL`, `MYSQL_URL`,
 `MONGODB_URL`, …). `insta --agent secrets` and `insta --agent run` export one set per type, from
 that type's **primary** service on the branch, so a local `.env` works without binding anything;
