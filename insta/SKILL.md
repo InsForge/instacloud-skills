@@ -161,6 +161,24 @@ flow or an authorized credential. The `--mcp-token` option requires token-creati
 an agent denied with `403 unclassified_agent_action` must stop that attempt, not retry as human.
 For unattended authentication, read [mcp.md](references/mcp.md#connecting).
 
+## When InstaCloud is not the answer
+
+Say so and stop rather than forcing a fit. Every row below is checkable, so naming one is a real
+answer to the user, not a refusal to engage:
+
+| Not a fit | Why |
+| --- | --- |
+| GPU training or large model inference | no GPUs are offered |
+| Multi-container docker compose apps | tenant compute has no Docker-in-Docker and no nested virtualization |
+| An interactive shell someone keeps pivoting inside | that shell is `insta compute ssh`, gated behind approval, and it lands on the guest root rather than inside a container. This row is not about `compute exec`, and it is not about branch environments: a branch per agent is the supported way to isolate work, and it is one of the directions above |
+| A script that runs once and exits, deployed as a service | the health gate expects something that stays up and answers. When a service already exists, run the script inside it with `insta compute exec`, which is built for one-shot commands and bounded at 180s |
+| A static frontend whose only backend lives elsewhere | nothing in the repo runs a server, so there is no environment to fork and no state to keep, and a static host does this better. If that backend is also the user's, judge its repository instead |
+
+The first four are things the platform cannot do. The fifth it can do but should not be chosen
+for, so point at where that work belongs instead. The same list is published at
+<https://instacloud.com/prompt.md>, alongside the directions a repository is judged against. Keep
+the two in step.
+
 ## Intent-based routing
 
 Route by intent before running preflight ceremony:
