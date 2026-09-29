@@ -40,7 +40,7 @@ redis|mysql|mongodb> <metrics|logs> [service]`), not a shared top-level command 
 insta --agent compute metrics [service] [--branch --from --to --step --json]
 insta --agent compute logs [service] [--branch --limit --region --instance --json]
 insta --agent compute logs [service] --since 2h     # time window (--from/--to also accepted) — pages ~7 days of history
-insta --agent <redis|mysql|mongodb> metrics [service]   # managed DBs are Fly apps: same full metrics/logs
+insta --agent <redis|mysql|mongodb> metrics [service]   # managed DBs: same full metrics/logs
 insta --agent <redis|mysql|mongodb> logs [service] [--deploy]
 insta --agent postgres metrics [service] · insta --agent postgres logs [service]      # provider-limited — returns a note, not series
 ```
@@ -183,7 +183,7 @@ Rules worth knowing before you call it:
 - **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born always-on since 2026-09-07, so this applies to services switched to scale-to-zero). What happens to a
   scaled-to-zero machine depends on the compute plane behind your deployment — `insta --agent agent manifest
   --json` names it on each compute row (`provider`: `fly` or `insta-compute`, or the neutral `compute`
-  when the platform did not report one, in which case assume neither behaviour). On the Fly-backed one it
+  when the platform did not report one, in which case assume neither behaviour). On the legacy (`fly`) plane it
   takes the new config *without waking*, coming up on it at the next request: nothing is
   health-checked and no uptime is billed for the restart itself. On the insta-compute plane the deploy
   waits for the service to be running and gates it.
@@ -243,7 +243,7 @@ not open the session itself.
   instead, and nothing is written to `~/.ssh`.
 - Gated on **both** `compute.shell` and `secrets.read` (a shell inherits the service's decrypted
   env), and `compute.shell` **defaults to `approve`** rather than `allow` — see governance.md.
-- **Compute-plane dependent**: a Fly-backed service has no SSH gateway and 400s naming `compute exec`
+- **Compute-plane dependent**: a legacy-plane service has no SSH gateway and 400s naming `compute exec`
   instead. `insta --agent agent manifest --json` names the plane per compute row.
 
 ## Deploy triage (URL not serving after deploy)
