@@ -64,9 +64,10 @@ egress — never by machine size × hours. The idle mode only changes what "idle
 - **Scale-to-zero (opt-in for compute; the default for postgres)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
   start (typically a few seconds) on the first request after idling. On the insta-compute plane
-  (`microvm` in `agent manifest`), idle means 5 minutes with no inbound connection through the
-  router (HTTP, TCP or IP lanes) and no shell session: CPU work and log output never count, and
-  outbound traffic counts only where a regional setting enables it, so do not rely on it. Background
+  (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means 5 minutes
+  with no inbound traffic through the router and no shell session: CPU work and log output never
+  count, and outbound traffic keeps it awake only where a regional setting enables that, so do not
+  rely on it. Background
   work that serves no requests (a bot polling its platform, a queue consumer, an in-process cron)
   therefore needs always-on.
 
@@ -181,10 +182,10 @@ Rules worth knowing before you call it:
   telling you the app itself is broken, not the platform.
 - **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born always-on since 2026-09-07, so this applies to services switched to scale-to-zero). What happens to a
   scaled-to-zero machine depends on the compute plane behind your deployment — `insta --agent agent manifest
-  --json` names it on each compute row (`provider`: `fly` or `microvm`, or the neutral `compute`
+  --json` names it on each compute row (`provider`: `fly` or `insta-compute`, or the neutral `compute`
   when the platform did not report one, in which case assume neither behaviour). On the Fly-backed one it
   takes the new config *without waking*, coming up on it at the next request: nothing is
-  health-checked and no uptime is billed for the restart itself. On the microVM plane the deploy
+  health-checked and no uptime is billed for the restart itself. On the insta-compute plane the deploy
   waits for the service to be running and gates it.
   So do not read a fast, green restart of an idle service as proof the app still boots. If that
   proof is what you were after, **send it a request** and check the response — that is the one step
