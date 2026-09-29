@@ -11,3 +11,9 @@ jobs:
       - name: No unresolved merge-conflict markers
         run: |
           ! grep -rIn --exclude-dir=.git -e '^<<<<<<< ' -e '^>>>>>>> ' .
+      # Two defects that a diff does not show and a reader of the source cannot see, both of which
+      # have shipped from this repo before: a code fence whose closer carries trailing text (which
+      # swallows the prose after it into one grey block) and a raw `|` in a table cell (which drops
+      # the rest of that row from the render). See .github/check-markdown.py.
+      - name: Markdown renders as written
+        run: python3 .github/check-markdown.py

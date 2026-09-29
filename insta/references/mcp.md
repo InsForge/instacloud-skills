@@ -12,23 +12,24 @@ gates, same audit trail.
 hosted agents with no shell (Claude.ai / ChatGPT connectors), or a machine where the CLI isn't
 installed and can't be. When you do have a shell, prefer the CLI even if MCP tools are also
 connected — it carries linked-repo context and covers everything except a few MCP-only
-read-only diagnostics (`insta_runtime_health`, `insta_operations`, and `insta_db_stats`'s
-`insight`/`activity`/`query-stats` kinds — its `metrics` kind is `insta --agent db stats`; see the
-mapping table below), which are fine to call from any client. **The CLI is the only path** for
-the things a remote server cannot or must not do:
+read-only diagnostics (`insta_list_service_statuses`, `insta_list_postgres_operations`, and
+`insta_get_postgres_stats`'s `insight`/`activity`/`query-stats` kinds — its `metrics` kind is
+`insta --agent postgres stats`; see the mapping table below), which are fine to call from any
+client. **The CLI is the only path** for the things a remote server cannot or must not do:
 
 | Capability | Why CLI-only |
 |---|---|
 | `insta --agent login` / auth / API-token CRUD | credential minting is deliberately not a remote tool |
 | `insta --agent secrets` (pull values → `.env`) / `insta --agent run` | secret **values** never flow out of MCP — names only, values in |
-| `insta --agent db url` / `insta --agent db connect` (postgres DSN) | same rule — the DSN is a value read, so it only exists on the CLI |
+| `insta --agent postgres url` / `insta --agent postgres connect` (postgres DSN) | same rule — the DSN is a value read, so it only exists on the CLI |
 | `insta --agent deploy <dir>` (source builds) | needs a local build context; `insta_deploy` takes prebuilt image URLs only |
-| `insta --agent observe` hook / `insta --agent setup` | local-machine operations |
-| `insta --agent db limits` (database machine spec) | not yet exposed as an MCP tool |
+| `insta --agent agent observe` hook / `insta --agent agent setup` | local-machine operations |
+| `insta --agent postgres limits` (database machine spec) | not yet exposed as an MCP tool |
+| `insta --agent compute scale --remove <instance>` (drop one named instance) | not yet exposed as an MCP tool; `insta_scale_service` sets a count only |
 
 ## Connecting
 
-`insta --agent setup agent` registers the server with Claude Code automatically (user scope). The default
+`insta --agent agent setup` registers the server with Claude Code automatically (user scope). The default
 is **OAuth — no credential is written**: registration is just
 
 ```bash
@@ -41,14 +42,26 @@ revocable tokens, nothing static on disk.
 
 Setup also writes an OAuth (URL-only) entry into the config of **every other detected
 MCP-capable agent** — Cursor, OpenAI Codex, OpenCode, GitHub Copilot, Factory Droid — and
-`insta --agent mcp install --agent <slug>` targets one explicitly. Merges never clobber existing config
+`insta --agent config install-mcp --agent <slug>` targets one explicitly. Merges never clobber existing config
 entries.
 
-**Headless machines / CI** (no browser): `insta --agent setup agent --mcp-token` instead mints a durable
-`insta_` API token named `mcp-<hostname>` (needs `insta --agent login` first) and registers Claude Code
-with an `Authorization: Bearer` header. Manual setup for any other client works the same way:
-OAuth if the client supports MCP OAuth discovery, else a Bearer header with any `insta_` API
-token.
+**Headless machines / CI:** `--mcp-token` is a Claude Code registration option, not a login bypass.
+It requests a durable `insta_` token named `mcp-<hostname>` from the platform and stores it in an
+`Authorization: Bearer` header. It needs both a logged-in CLI session and permission to create
+tokens. Signed agent requests currently cannot create tokens (`403 unclassified_agent_action`);
+logging in again does not grant that permission. Report the denial and stop this registration
+attempt. Do not remove `--agent`, switch identity, or call the token API directly to get around it.
+
+For unattended MCP, arrange supported authentication before the agent starts: complete the
+client's OAuth flow, or have the authorized test harness configure an approved credential where
+the client supports it. The credential must not go in the agent prompt or logs. URL-only OAuth
+registration is not proof of authentication; verify the connection with an actual tool call.
+
+`--mcp-token` does not convert an existing registration or configure token headers for other
+clients. Existing entries stay unchanged. A failed token request or incomplete Claude registration
+is an error, even if skills or another client's OAuth entry were installed successfully. On older
+CLI versions (including 0.0.66), token failures can misleadingly print `needs a login` and exit 0;
+do not treat that output as success.
 
 ## Environments
 
@@ -64,8 +77,8 @@ The distinct names matter: registration is idempotent by name, so a shared name 
 staging install silently pointed at the prod server. Because the names differ, **both can be
 registered on one machine at once** — check which you're talking to with `insta --agent env`.
 
-`insta --agent setup agent --env staging` (or `curl -fsSL agents.staging.instacloud.com | sh`) switches
-the environment and registers staging's server in one step (CLI ≥ 0.0.38 — bare `setup agent`
+`insta --agent agent setup --env staging` (or `curl -fsSL agents.staging.instacloud.com | sh`) switches
+the environment and registers staging's server in one step (CLI ≥ 0.0.38 — bare `agent setup`
 always targets prod, so a bare re-run after `env use staging` would switch the machine back).
 `INSTA_MCP_URL` still overrides outright, for a self-hosted or tunnelled server.
 
@@ -74,38 +87,41 @@ won't pick them up.
 
 ## Tool ↔ CLI mapping
 
-Naming is `insta_<noun>_<verb>`; every tool takes **explicit `projectId` / `branch` args** — the
+Naming is `insta_<verb>_<noun>`; every tool takes **explicit `projectId` / `branch` args** — the
 server is stateless, there is no "current project" like `./.insta/project.json`. Get the
-`projectId` from `insta_project_list` (or `.insta/project.json` if you're in a linked repo).
+`projectId` from `insta_list_projects` (or `.insta/project.json` if you're in a linked repo).
 
 | CLI | MCP tool |
 |---|---|
 | `insta --agent status` (am I connected?) | `insta_whoami` |
-| `insta --agent org list` / `create` | `insta_org_list` / `insta_org_create` |
-| `insta --agent project list/create/delete` | `insta_project_list` / `insta_project_create` / `insta_project_get` / `insta_project_delete` |
-| region discovery | `insta_regions` |
-| `insta --agent services add/list/remove/rename` [`--branch`] | `insta_service_add` / `insta_service_list` / `insta_service_remove` / `insta_service_rename` (all take `branch?`; add takes `public?` for storage) |
-| services public/private toggle | `insta_service_access` |
-| `insta --agent services scale/upgrade` | `insta_service_scale` / `insta_service_upgrade` |
-| `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_compute_control` / `insta_compute_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
-| `insta --agent compute exec [service] -- <command>` | `insta_compute_exec` (`name?`/`branch?`/`command`/`timeoutSec?`) |
-| `insta --agent compute limits/always-on/volume` | `insta_compute_limits` / `insta_compute_always_on` / `insta_volume` (read/grow: compute + managed fly DBs; remove: compute only, destroys the disk and its data) |
-| `insta --agent compute set-domain/check-domain/remove-domain` | `insta_domain_set` / `insta_domain_check` / `insta_domain_remove` |
-| `insta --agent branch create/list/merge/delete` | `insta_branch_create` / `insta_branch_list` / `insta_branch_merge` / `insta_branch_delete` |
-| `insta --agent manifest` | `insta_manifest` (env view — **no secret values**) |
-| `insta --agent secrets list/set/unset` | `insta_secrets_list` (names only) / `insta_secrets_set` / `insta_secrets_unset` |
-| `insta --agent secrets sources/bindings/bind/unbind` | `insta_secret_sources` / `insta_secret_bindings` / `insta_secret_bind` / `insta_secret_unbind` (provider credential binding; names only, no secret values) |
+| `insta --agent org list` / `create` | `insta_list_orgs` / `insta_create_org` |
+| `insta --agent project list/create/delete` | `insta_list_projects` / `insta_create_project` / `insta_get_project` / `insta_delete_project` |
+| region discovery | `insta_list_regions` |
+| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage) |
+| `insta --agent storage set-access` | `insta_set_service_access` |
+| `insta --agent compute scale` | `insta_scale_service` |
+| `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_set_compute_state` / `insta_get_service_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
+| `insta --agent compute exec [service] -- <command>` | `insta_exec_compute_command` (`name?`/`branch?`/`command`/`timeoutSec?`) |
+| `insta --agent compute limits/always-on/volume` (same shape under `redis\|mysql\|mongodb`) | `insta_get_service` (read: limits, always-on state, start command, volume) / `insta_update_service` (write: `alwaysOn`, `startCommand`, `memoryMb`, `cpu`, `volumeGib`, `volumeMountPath`, one restart. `alwaysOn`/`startCommand` gated `deploy`, the rest gated `service.upgrade`) / `insta_delete_service_volume` (compute only, destructive, deletes the disk and its data) |
+| `insta --agent compute start-command` | `insta_update_service` (`startCommand` field, gated `deploy`) |
+| `insta --agent domain attach/check/detach` | `insta_attach_domain` / `insta_check_domain` / `insta_detach_domain` |
+| `insta --agent branch create/list/merge/delete` | `insta_create_branch` / `insta_list_branches` / `insta_merge_branch` / `insta_delete_branch` |
+| `insta --agent agent manifest` | `insta_get_agent_manifest` (env view — **no secret values**) |
+| `insta --agent secrets list/set/unset` | `insta_list_secrets` (names only) / `insta_set_secret` / `insta_unset_secret` |
+| `insta --agent secrets sources/bindings/bind/unbind` | `insta_list_secret_sources` / `insta_list_secret_bindings` / `insta_bind_secret` / `insta_unbind_secret` (provider credential binding; names only, no secret values) |
 | `insta --agent deploy --image <url>` | `insta_deploy` (image-only) |
-| `insta --agent metrics/logs/events` | `insta_metrics` / `insta_logs` / `insta_deploy_events` / `insta_events` |
-| runtime health / db provider operations (no CLI equivalent) | `insta_runtime_health` / `insta_operations` (database provider operations, not a general operations feed; for watching a postgres branch or restore settle) |
-| `insta --agent db stats` (`metrics` kind; `insight`/`activity`/`query-stats` are MCP-only) | `insta_db_stats` (read-only; `kind` = metrics, insight, activity, query-stats) |
-| `insta --agent usage` / `billing` | `insta_usage` / `insta_org_usage` (org-level, optional `from`/`to`) / `insta_billing_summary` / `insta_billing_overview` (org-level, current cycle only) |
-| `insta --agent billing upgrade/portal` | `insta_billing_checkout` / `insta_billing_portal` — return a Stripe **URL for the human**; relay it, never claim payment happened |
-| `insta --agent agent-policy get/set` | `insta_agent_policy_get` / `insta_agent_policy_set` (admin-only; restricted agents cannot change policy) |
-| `insta --agent approvals list` | `insta_approvals_list`; approve/deny require a human terminal and are rejected through MCP |
-| storage browse/download/delete | `insta_storage_list` / `insta_storage_download_url` / `insta_storage_delete` (no upload yet) |
-| `insta --agent template list/info/deploy` | `insta_template_search` / `insta_template_get` / `insta_template_deploy` / `insta_template_deployment_status` |
-| `insta --agent feedback` | `insta_feedback` (same fields; pass `projectId`/`branch` explicitly — see [cli-reference.md → Feedback](../cli-reference.md#feedback)) |
+| `insta --agent <compute\|postgres\|redis\|mysql\|mongodb> metrics/logs` (`--deploy` for deploy events — compute/redis/mysql/mongodb only; postgres has no deploy events) · `insta --agent agent events` | `insta_get_service_metrics` / `insta_get_service_logs` / `insta_list_deploy_events` / `insta_list_agent_events` (metrics and logs take `type`, not `component`. postgres passes `type: postgres`) |
+| `insta --agent <redis\|mysql\|mongodb> status` reads the same runtime-health data (filtered to one service); db provider operations have no CLI equivalent | `insta_list_service_statuses` / `insta_list_postgres_operations` (database provider operations, not a general operations feed; for watching a postgres branch or restore settle) |
+| `insta --agent postgres stats` (`metrics` kind; `insight`/`activity`/`query-stats` are MCP-only) | `insta_get_postgres_stats` (read-only; `kind` = metrics, insight, activity, query-stats) |
+| `insta --agent <redis\|mysql\|mongodb> query` | `insta_query_database` (`argv` for redis, `command` for mysql or mongodb, `database` selects the mongodb database. Not for postgres, use `insta_get_postgres_stats` or the SQL editor) |
+| `insta --agent billing usage` / `billing` | `insta_get_billing_usage` / `insta_get_org_usage` (org-level, optional `from`/`to`) / `insta_get_billing_summary` / `insta_get_billing_overview` (org-level, current cycle only) |
+| `insta --agent billing subscribe/portal` | `insta_create_billing_checkout` (`tier` = `pro` or `team`) / `insta_create_billing_portal` — return a Stripe **URL for the human**; relay it, never claim payment happened |
+| `insta --agent agent policy get/set` | `insta_get_agent_policy` / `insta_set_agent_policy` (admin-only; restricted agents cannot change policy) |
+| `insta --agent agent approvals list` | `insta_list_agent_approvals`. Approve and deny are CLI-only, run `insta agent approvals approve/deny <id>` from a human terminal |
+| storage browse/download/delete | `insta_list_storage_objects` / `insta_get_storage_download_url` / `insta_delete_storage_object` (no upload yet) |
+| `insta --agent template list/info/deploy` (`--region <r>` on `deploy` only) | `insta_search_templates` / `insta_get_template` / `insta_deploy_template` (`region` parameter, slugs from `insta_list_regions`) / `insta_get_template_deployment` |
+| `insta --agent feedback` | `insta_send_feedback` (same fields; pass `projectId`/`branch` explicitly — see [cli-reference.md → Feedback](../cli-reference.md#feedback)) |
+| `insta --agent feedback status <ticket-id>` | `insta_get_feedback_status` (`ticketId` from `insta_send_feedback`'s `ticket.id`; status only, the replies are in the console) |
 
 ## Behavior that carries over from the CLI
 

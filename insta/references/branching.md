@@ -5,7 +5,7 @@ copy of the whole environment — *including the database's data and the bucket'
 in seconds. Use it as the default unit of ALL work. Never develop on `main`.
 
 **Services are branch-owned, not project-wide.** Each branch has its own service catalog —
-`insta --agent services add/list/remove` all default to the **current** branch, and a service added on one
+`insta --agent service add/list/remove` all default to the **current** branch, and a service added on one
 branch does **not** appear on any other branch, including its parent. `insta --agent branch create` **forks**
 the parent's current services at creation time (below); after that, the two branches' catalogs
 diverge independently — adding, removing, or scaling a service on one has no effect on the other.
@@ -26,9 +26,9 @@ insta --agent secrets bindings --target compute/app --branch feat-x
 ```
 
 For direct access to a branch's DB from outside compute (psql, migrations, local tools):
-`insta --agent db url --branch feat-x` prints that branch's connection string; `insta --agent db connect --branch
+`insta --agent postgres url --branch feat-x` prints that branch's connection string; `insta --agent postgres connect --branch
 feat-x` opens psql on it. Before any dump or restore, match the client major to the branch's
-`pg_version` (`insta --agent services list --json --branch feat-x`; see [operate.md](operate.md)).
+`pg_version` (`insta --agent service list --json --branch feat-x`; see [operate.md](operate.md)).
 
 `insta --agent secrets set <NAME> --service compute/app` scopes a **user-defined** secret to that compute
 service. It is separate from provider credential binding (`insta --agent secrets bind`). Removing a service
@@ -40,16 +40,24 @@ deletes secrets and bindings scoped to it; unbound and project-wide secrets are 
 | --- | --- | --- |
 | postgres (each) | copy-on-write DB branch | **the parent's data**, isolated — writes never touch the parent |
 | storage (each) | copy-on-write bucket fork | **the parent's objects**, isolated |
-| compute (each group) | a fresh isolated app + URL per group | **infrastructure only — no code running yet (cloud)** |
+| compute (each group) | a fresh isolated app + URL per group | **the parent's persisted image, if it has one**, already running — `branch.ts` carries `image`/`port`/`always_on` onto the child and boots it with the branch's own secret bundle. A parent never deployed has no image, so that clone is an empty, unreachable app until you deploy to it |
+| cron schedules | **not cloned** | a new branch has **no** schedules, whatever the parent has. A schedule belongs to one branch and stays there: none is copied on create or fork, none is migrated on merge or promotion, and all of a branch's schedules are **deleted with the branch**. So a job that must survive promotion has to be created on the branch that survives — usually `main` — and a branch under test does not double-fire its parent's jobs, which is the reason it works this way |
 | user secrets + compute credential bindings | parent's branch-scoped `secrets set` values and `secrets bind` rules | copied to the new branch with service ids remapped |
 
-Two consequences to internalize:
+Three consequences to internalize:
 
-- **Data clones; code re-materializes.** On the cloud, the clone's compute is an empty app until
-  you `insta --agent deploy --branch <name>` (insta-oss auto-redeploys the parent's image). Deploy is part
-  of the branch loop, not an afterthought.
+- **The clone serves before you deploy, if the parent was ever deployed.** Its compute comes up on the
+  **parent's persisted image**, on the cloud and on insta-oss alike (insta-oss redeploys it asleep), so a
+  branch of a live service has a working URL from the start: deploy to it when you want the branch's *code*,
+  not to make it serve at all. Fork a service that has never been deployed and there is no image to re-run,
+  so that one really is empty until you deploy. `insta --agent service list` shows which is which.
+- **A literal secret still points at the parent.** User secrets are copied **ciphertext and all**, and only
+  the `service_id` is remapped (`branch.ts`); `secrets bind` rules are remapped properly. So a value that is
+  itself a URL of a sibling service — `DENO_RUNTIME_URL`, `POSTGREST_BASE_URL`, anything you typed rather
+  than bound — still addresses **main's** service from inside the branch. Re-set those on the branch and
+  restart, or the branch quietly drives production.
 - A legacy project whose root bucket predates snapshots keeps one **shared** bucket — no storage
-  isolation. `insta --agent manifest` shows what a branch really has.
+  isolation. `insta --agent agent manifest` shows what a branch really has.
 
 **Limits:** ≤10 branches per project (hard). `branch create` does **NOT** switch you; the idle mode
 is per service, not per branch — new compute is born always-on on every branch, `main` included, and
