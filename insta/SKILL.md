@@ -67,7 +67,7 @@ types you build directly against are:
   below). See [storage.md](references/storage.md).
 - **compute** — your container(s) at a public URL. A project can have several compute services
   (e.g. `api`, `worker`).
-- **redis/mysql/mongodb** — managed Fly-backed data services. They expose connection env names such
+- **redis/mysql/mongodb** — managed data services. They expose connection env names such
   as `REDIS_URL`, `MYSQL_URL`, and `MONGODB_URL`.
 
 **A new project starts empty** — no services are created automatically. Add what you need:
