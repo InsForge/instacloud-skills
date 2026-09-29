@@ -137,7 +137,7 @@ insta --agent secrets set INSFORGE_TELEMETRY_DISABLED 1 --service compute/api
 # 3. files FIRST (writers already stopped in step 0): out of the source volume, into the bucket under InsForge's
 #    key layout ${APP_KEY:-local}/<bucket>/<key>
 docker compose cp insforge:/insforge-storage/. ./storage-data/               # on disk: <bucket>/<key>
-eval "$(insta --agent secrets --print --json --service compute/api | jq -r \
+eval "$(insta --agent secrets --json --service compute/api | jq -r \
   '"export AWS_ACCESS_KEY_ID=\(.S3_ACCESS_KEY_ID|@sh) AWS_SECRET_ACCESS_KEY=\(.S3_SECRET_ACCESS_KEY|@sh) S3_BUCKET=\(.S3_BUCKET|@sh) S3_ENDPOINT_URL=\(.S3_ENDPOINT_URL|@sh)"')"
 aws s3 sync ./storage-data "s3://$S3_BUCKET/local/" --endpoint-url "$S3_ENDPOINT_URL"   # measured: etags equal to source
 
@@ -231,7 +231,7 @@ insta --agent service add compute deno --port 7133 --always-on
 umask 077   # belt and braces; mktemp does not need it
 API_ENV="$(mktemp -t insta-api-env)"        # OUTSIDE deno-build: `deploy .` uploads that whole
 trap 'rm -f "$API_ENV"' EXIT INT TERM       # directory to the remote builder, and a secrets dump
-insta --agent secrets --print --json --service compute/api > "$API_ENV"   # inside it would ride along
+insta --agent secrets --json --service compute/api > "$API_ENV"   # inside it would ride along
 for n in POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD \
          JWT_SECRET POSTGREST_BASE_URL; do
   v="$(jq -r --arg k "$n" '.[$k] // empty' "$API_ENV")"
@@ -309,7 +309,7 @@ is on insta-oss).
 branch's DSN, and must differ from main's.
 
 ```bash
-insta --agent secrets --print --json --service compute/api --branch fix-urls | jq -r .POSTGRES_HOST
+insta --agent secrets --json --service compute/api --branch fix-urls | jq -r .POSTGRES_HOST
 insta --agent postgres url "$PG" --branch fix-urls | sed -E 's#^([a-z+]+://)[^@]*@#\1***@#'
 ```
 
