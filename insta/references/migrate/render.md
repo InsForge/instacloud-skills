@@ -56,7 +56,7 @@ if RENDER_EXTERNAL_HOSTNAME: ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 `ALLOWED_HOSTS` stays empty, so Django answers **HTTP 400 `DisallowedHost` to every request** on the
 insta domain. **The platform reports the service as healthy while this happens**, because the check
-is TCP on the port (`adapters/fly.ts`: `config.checks = { port: { type: 'tcp' } }`) and the app is
+is TCP on the port (the compute adapter's `config.checks = { port: { type: 'tcp' } }`) and the app is
 listening — it just refuses every request. `insta --agent compute status` looking fine proves nothing; curl
 the URL.
 

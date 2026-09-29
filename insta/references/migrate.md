@@ -155,7 +155,7 @@ insta --agent service add postgres db                          # + redis/storage
 insta --agent service add compute app --port <n>               # REQUIRED: the bind below targets it
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent deploy --image <registry/img> --port <n>          # works on every compute plane
-# or: insta --agent deploy <dir> --port <n>                     # any plane, no GitHub needed; Dockerfile optional on insta-compute, required on Fly-backed
+# or: insta --agent deploy <dir> --port <n>                     # any plane, no GitHub needed; Dockerfile optional on insta-compute, required on a legacy plane
 # or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; nixpacks if no Dockerfile; redeploys on push
 ```
 
@@ -239,19 +239,20 @@ lane shipped (insta-cli#197, and the `source-build` discovery endpoint is on pla
 prod), and it changes the answer this file used to give. Measured on staging, 2026-09-11: a
 Dockerfile-less `render-examples/express-hello-world` checkout, `insta --agent deploy . --port 3000`,
 **HTTP 200** — packed 7 files, `deploying … via the gateway (nixpacks)`, built, deployed. **66
-seconds with a warm builder, 6m28s cold** (the remote builder is Fly's; warm it with a throwaway
+seconds with a warm builder, 6m28s cold** (the remote builder is shared; warm it with a throwaway
 build before anything time-sensitive).
 
 How the CLI decides, so you can predict it: it asks `GET /projects/:id/source-build?branch=&group=`
-and the **platform** answers `flyctl`, `archive`, `local-docker` or `none`. Measured: a Fly-backed
-service answers `{"lane":"flyctl"}`, an insta-compute service answers `{"lane":"archive"}` with the
-server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files). A platform too old to have
-the endpoint answers 404 and the CLI falls back to the old flyctl path unchanged. So:
+and the **platform** answers `flyctl` (a legacy wire value), `archive`, `local-docker` or `none`.
+Measured: a legacy service answers `{"lane":"flyctl"}`, an insta-compute service answers
+`{"lane":"archive"}` with the server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files).
+A platform too old to have the endpoint answers 404 and the CLI falls back to the old legacy-lane
+path unchanged. So:
 
 - **insta-compute target:** `deploy <dir>` packs the directory and the gateway builds it — with the
   Dockerfile if one is present, **nixpacks if not.** No GitHub, no App authorization: this removes
   the one step in this runbook only a human could perform for a private repo.
-- **Fly-backed target:** `deploy <dir>` still needs a Dockerfile (the flyctl lane builds it). A Fly
+- **Legacy-plane target:** `deploy <dir>` still needs a Dockerfile (the legacy lane builds it). A Fly
   app has one, so it works; a buildpack app does not, so use `connect-repo` there.
 
 **`connect-repo` is still right for three things:** a private repo the user wants redeployed on

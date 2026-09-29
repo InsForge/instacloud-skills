@@ -43,7 +43,7 @@ The CLI first asks the platform which lane serves the target service, then follo
 **Legacy compute plane:**
 
 1. The dir **must** contain a `Dockerfile` — there is no nixpacks lane on this plane, and the CLI exits 1 without one, naming the options: add a Dockerfile (framework recipes below), use `--image`, or connect the repo to the service (`insta --agent compute connect-repo <owner/repo> [service]`), which builds Dockerfile-less repos with nixpacks server-side.
-2. Needs the `flyctl` build tool locally (auto-installed via Homebrew on macOS) but **no account/login of your own** — the platform mints a **short-lived, app-scoped deploy token** (govern-gated: it can return `approval_required` *before* any build runs).
+2. Needs the legacy plane's build tool locally (auto-installed via Homebrew on macOS) but **no account/login of your own** — the platform mints a **short-lived, app-scoped deploy token** (govern-gated: it can return `approval_required` *before* any build runs).
 3. The build runs on the legacy plane's **remote builders** (no local Docker); the image is pushed and **pinned by digest** (tags race the registry), then deployed like any image.
 
 **insta-oss:** source mode builds the image with your local Docker — same command; `insta --agent compute connect-repo` is cloud-only there (501).

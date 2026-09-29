@@ -182,8 +182,8 @@ Rules worth knowing before you call it:
   telling you the app itself is broken, not the platform.
 - **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born always-on since 2026-09-07, so this applies to services switched to scale-to-zero). What happens to a
   scaled-to-zero machine depends on the compute plane behind your deployment — `insta --agent agent manifest
-  --json` names it on each compute row (`provider`: `fly` or `insta-compute`, or the neutral `compute`
-  when the platform did not report one, in which case assume neither behaviour). On the legacy (`fly`) plane it
+  --json` names it on each compute row (`provider`: `insta-compute`, a legacy value, or the neutral `compute`
+  when the platform did not report one, in which case assume neither behaviour). On a legacy plane it
   takes the new config *without waking*, coming up on it at the next request: nothing is
   health-checked and no uptime is billed for the restart itself. On the insta-compute plane the deploy
   waits for the service to be running and gates it.
