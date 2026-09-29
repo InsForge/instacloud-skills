@@ -107,6 +107,10 @@ anonymous public-read with
 insta --agent storage set-access public --service <name>   # or private
 ```
 
+`set-access` prints no URL. The only public object URL the platform names is virtual-hosted,
+`https://<BUCKET_NAME>.<public host>/<key>`; `insta --agent agent manifest --json` carries its base
+as the bucket's `publicUrl`, and only where the deployment has that host configured.
+
 Public is a whole-bucket switch, not per-object. When only *some* files should be reachable, keep the
 bucket private and have your own backend hand out a short-lived URL per request — the caller never
 sees the credentials, and the link expires:

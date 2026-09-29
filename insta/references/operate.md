@@ -45,6 +45,10 @@ insta --agent <redis|mysql|mongodb> logs [service] [--deploy]
 insta --agent postgres metrics [service] · insta --agent postgres logs [service]      # provider-limited — returns a note, not series
 ```
 
+On the insta-compute plane, compute's network series (`egress_bytes_rate` / `ingress_bytes_rate`)
+and its billed egress count only bytes carried through the router, i.e. traffic with the app's
+clients; the app's own outbound traffic (uploads to storage, calls to external APIs) is in neither.
+
 insta-oss: metrics/logs return a clear "cloud-only / coming" 501 today — use `docker logs`/`docker
 stats` on the branch's containers directly if you must, and don't retry the CLI command.
 
@@ -59,9 +63,12 @@ egress — never by machine size × hours. The idle mode only changes what "idle
   minimum-spec app, mostly RAM).
 - **Scale-to-zero (opt-in for compute; the default for postgres)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
-  start (typically a few seconds) on the first request after idling. Note: a service whose work
-  arrives only on outbound connections (a bot polling its platform, a cron) is never woken by
-  anyone, so it needs always-on.
+  start (typically a few seconds) on the first request after idling. On the insta-compute plane
+  (`microvm` in `agent manifest`), idle means 5 minutes with no inbound connection through the
+  router (HTTP, TCP or IP lanes) and no shell session: CPU work and log output never count, and
+  outbound traffic counts only where a regional setting enables it, so do not rely on it. Background
+  work that serves no requests (a bot polling its platform, a queue consumer, an in-process cron)
+  therefore needs always-on.
 
 Flip it any time — it is a latency/cost dial, not a plan feature:
 
