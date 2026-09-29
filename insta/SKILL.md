@@ -127,10 +127,15 @@ The same commands drive both. Resolve which one you're on from `insta --agent st
   token; humans: bare `insta --agent login` opens the console sign-in/approval page in the browser — any
   account type; headless machine with a human reachable elsewhere: `--device` prints a link + code
   they approve from any other browser). **CI and long-lived automations use a scoped API token**:
-  `insta --agent tokens create <name> --org <id>` (or `--project <id>`), then `insta --agent login --api-key <insta_…>`
-  — never an account-wide token. A `403 token_scope` from any command means the credential is narrower
-  than the call, not that a role is missing; mint a wider token from an account login instead of
-  touching memberships (see [cli-reference.md](cli-reference.md#commands)).
+  the **human** runs `insta tokens create <name> --org <id>` (or `--project <id>`) in their own terminal, then the
+  automation uses `insta --agent login --api-key <insta_…>` — never an account-wide token.
+  **`insta tokens create` / `revoke` are human-only for security — an agent must never mint its own credentials**
+  (an `insta_` token used without `--agent` is treated as a human request, outside agent policy); from an agent session both return
+  `403 unclassified_agent_action` under every policy. Don't retry or switch identity: hand the user the exact
+  command, and have them run it outside this session so the once-shown plaintext stays out of the transcript.
+  A `403 token_scope` from any command means the credential is narrower than the call, not that a role is
+  missing; the fix is a wider token the human mints from an account login, not touching memberships
+  (see [cli-reference.md](cli-reference.md#commands)).
 - **insta-oss (self-hosted local daemon)** — `INSTA_API_URL=http://127.0.0.1:8080` (its default).
   **No login exists or is needed** (localhost trust, builtin `local` user); billing/usage/metrics
   return clear "cloud-only" errors — don't retry them.
@@ -158,7 +163,7 @@ mapping + connection guide: **[mcp.md](references/mcp.md)**.
 agent), then tell the user to **restart their coding tool** — a running session never picks up
 newly registered MCP servers or tools. One specific agent: `insta --agent config install-mcp --agent <slug>`.
 Registration alone does not authenticate the client; actual tool use requires a completed OAuth
-flow or an authorized credential. The `--mcp-token` option requires token-creation permission;
+flow or an authorized credential. The `--mcp-token` option mints a token, which is human-only by design (see [Two targets](#two-targets-one-cli));
 an agent denied with `403 unclassified_agent_action` must stop that attempt, not retry as human.
 For unattended authentication, read [mcp.md](references/mcp.md#connecting).
 
