@@ -48,8 +48,9 @@ entries.
 **Headless machines / CI:** `--mcp-token` is a Claude Code registration option, not a login bypass.
 It requests a durable `insta_` token named `mcp-<hostname>` from the platform and stores it in an
 `Authorization: Bearer` header. It needs both a logged-in CLI session and permission to create
-tokens. Signed agent requests currently cannot create tokens (`403 unclassified_agent_action`);
-logging in again does not grant that permission. Report the denial and stop this registration
+tokens. Signed agent requests cannot create tokens, by design (`403 unclassified_agent_action`): minting
+and revoking tokens is human-only so an agent can never issue itself a credential outside its agent policy.
+Logging in again does not grant that permission. Report the denial and stop this registration
 attempt. Do not remove `--agent`, switch identity, or call the token API directly to get around it.
 
 For unattended MCP, arrange supported authentication before the agent starts: complete the
