@@ -438,7 +438,7 @@ mismatch boots fine but every request fails with `instance refused connection on
 At deploy, compute receives `PORT`, user-defined secrets visible to that compute service, and
 provider credentials you explicitly bound with `insta --agent secrets bind`. It does **not** receive every
 platform credential by default. Read env vars from `process.env` in production; **never bake
-`./.env` into the image**. A compute service serves one app on one port at its public service URL (`insta --agent services list` prints it).
+`./.env` into the image**. A compute service serves one app on one port at its public service URL (`insta --agent service list` prints it).
 
 **Two domain paths, and they are not interchangeable.** You already own the name →
 `insta --agent domain attach app.example.com` attaches it to a branch's compute service and prints
