@@ -108,6 +108,49 @@ insta --agent postgres limits --memory 8Gi --cpu 4     # same dial for postgres
 up-only). `insta --agent compute limits --memory` is the only control now; resize postgres with
 `insta --agent postgres limits` and grow its disk with `insta --agent postgres volume`.
 
+## Postgres network access
+
+A postgres database is born **public**: `DATABASE_URL` reaches it from anywhere on the internet
+(password-authenticated, TLS). Two switches change that, both per branch and inherited by a branch
+forked from it:
+
+```bash
+insta --agent postgres private-access [service]          # read: public on/off, private on/off
+insta --agent postgres private-access on [service]       # mint DATABASE_PRIVATE_URL beside DATABASE_URL
+insta --agent secrets bind DATABASE_URL postgres/db --source-name DATABASE_PRIVATE_URL --to compute/app
+insta --agent compute restart app                        # the rebinding reaches the running machine
+insta --agent postgres public-access off [service]       # preview what breaks, confirm, close
+```
+
+- **Private access** (`private-access on`) adds `DATABASE_PRIVATE_URL`: the same database over the
+  private network lane. **When to use it: from compute services on InstaCloud (insta-compute).** Not
+  from a laptop, CI, or the legacy compute plane: its host only resolves inside InstaCloud networks.
+  `DATABASE_URL` is not changed, so turning it on moves nothing until a compute is rebound to it.
+- **Closing public access** (`public-access off`) makes the database **not reachable from the
+  internet**: the public endpoint refuses every connection (`FATAL 28000`). It needs private access
+  on first. **It breaks every client outside InstaCloud compute**: external services, CI, local
+  development, `insta --agent postgres url|connect` from this machine, and any compute still on
+  `DATABASE_URL` or on the legacy plane.
+- **Read the impact before closing.** The command prints the platform's preview first. It names each
+  compute that will lose the database, says whether the console can still reach it, and always
+  ends with the external-clients warning. Then it asks. An agent has no terminal, so it gets exit 2
+  and the preview instead. **Relay the preview to the human and get their go-ahead** before
+  re-running with `--yes`. It is also gated: `service.setAccess` may return an approval.
+- **About 30 seconds to take effect.** The proxy caches routes, so for up to ~30s after a change a
+  new connection may still see the old setting. Wait before verifying that a closed endpoint refuses.
+- **Say "not reachable from the internet", and no more than that.** Other workloads on the
+  InstaCloud compute plane can still reach the private endpoint and authenticate with the
+  password; the **password** is what keeps them out, so treat it like any other credential.
+- Re-open any time with `insta --agent postgres public-access on`. It is never refused. To turn
+  private access off, re-open public access first.
+- **Not yet available** on a deployment where the lane is not enabled: both `private-access on` and
+  `public-access off` say so, and change nothing. A database in a region without a private lane
+  answers that nothing was minted; `DATABASE_URL` keeps working.
+
+MCP: `insta_set_service_access` (`type: postgres`, `public: false`) closes or re-opens the endpoint
+and returns the same `impact` and `notice`. It does not preview first, so read the warnings it
+returns and act on them. There is no MCP tool for private access; use the CLI or the console.
+
 ## Compute volumes
 
 Compute persistent `/data` volumes are **not create-time only**:
