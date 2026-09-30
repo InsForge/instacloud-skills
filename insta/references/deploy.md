@@ -107,6 +107,11 @@ Deploy and a subsequent `insta --agent compute exec app -- <migration-command>` 
 non-atomic operations. Deploy success does not prove the migration succeeded, and exec failure
 does not roll back the deployment or database changes.
 
+Run migrations separately from the container's startup `CMD`. Deploy then exec only when the app
+works with the current schema (expand/contract). Otherwise apply a schema expansion compatible
+with the running app through a direct DB connection or an existing compatible migration runner
+before deploying the dependent code.
+
 A 502 or lost exec response can mean the command ran, including partial database changes.
 Do not automatically retry the exec command. On the intended branch and database, inspect the
 migration tool's ledger/status and the final schema before deciding what remains to run. Use the
@@ -145,8 +150,9 @@ app's expected status) → report deployed **with the URL**. Anything else → t
   backend) set a user secret to the URL plus `?ssl_cert_reqs=required`. That copy is static and
   no longer follows a rotation.
 - **A migration can block startup.** With `CMD migrate && server`, a hung migration prevents the
-  server from listening. Inspect the migration state and recover it using the
-  [migration guidance](#database-migrations); do not suppress migration failures.
+  server from listening. Move migrations into a separate step under the
+  [schema compatibility requirements](#database-migrations), inspecting any partial migration
+  state before retrying; do not suppress migration failures.
 - **Cold start ≠ down.** A scale-to-zero compute service (`--no-always-on`, or switched off with `insta --agent compute always-on off`) suspends when idle; the first request wakes it. New compute is born always-on and does not.
 - **Redeploy replaces.** Compute is stateless — anything written to the container filesystem is
   gone on the next deploy. State belongs in the branch's postgres/storage.

@@ -101,11 +101,14 @@ schema travels as migration **files**:
 
 1. Merge the branch's code in git (parallel-feature conflicts are usually additive — combine).
 2. Verify the merged code builds locally *before* the slow deploy.
-3. `insta --agent branch switch main` → `insta --agent deploy` the merged code → run the new migration files
-   against **main's** DB with `insta --agent compute exec app -- <migrate-cmd>` (the bound credentials are
-   already in the compute env). Deploy and migration are non-atomic: a failed exec can leave
-   database changes applied. Inspect the migration ledger and final schema before retrying, using
-   the tool's tracking and locking (see [migration recovery](deploy.md#database-migrations)).
+3. `insta --agent branch switch main`. Only if the merged app works with **main's current schema**
+   (expand/contract), `insta --agent deploy` it, then run the migration files against **main's** DB with
+   `insta --agent compute exec app -- <migrate-cmd>` (using the bound credentials). Otherwise apply a
+   schema expansion compatible with the running app through a direct DB connection or an existing
+   compatible migration runner **before** deploying the dependent code. Deploy and migration are
+   non-atomic: a failed exec can leave database changes applied. Inspect the migration ledger and
+   final schema before retrying, using the tool's tracking and locking
+   (see [migration recovery](deploy.md#database-migrations)).
 4. **Validate on main's URL** — promotion isn't done until the live result checks out.
 5. `insta --agent branch delete feat-x` — tear down the branch env (may hit a `branch.delete` gate).
 
