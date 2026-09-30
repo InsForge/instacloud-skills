@@ -126,10 +126,11 @@ app's expected status) → report deployed **with the URL**. Anything else → t
   `REDIS_URL` as is. `result_backend` does not, and raises
   `ValueError: A rediss:// URL must have parameter ssl_cert_reqs` before it connects (measured,
   celery 5.6.3). Keep the binding and set the TLS option in config instead of the URL:
-  `redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_REQUIRED}`, which is
-  `CELERY_REDIS_BACKEND_USE_SSL` under Django's `CELERY_` namespace. Only when the code cannot
-  change (a published image that hands the URL straight to its result backend) set a user secret
-  to the URL plus `?ssl_cert_reqs=required`. That copy is static and no longer follows a rotation.
+  `redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_REQUIRED}` (`CELERY_REDIS_BACKEND_USE_SSL`
+  under Django's `CELERY_` namespace), with `import ssl` at the top of that settings module. Only
+  when the code cannot change (a published image that hands the URL straight to its result
+  backend) set a user secret to the URL plus `?ssl_cert_reqs=required`. That copy is static and
+  no longer follows a rotation.
 - **Never gate container startup on migrations.** `CMD migrate && server` + a hung migration =
   a "successful" deploy that serves nothing, with empty logs. Run migrations non-blocking:
   `timeout 30 <migrate> || echo skipped; <start-server>`.
