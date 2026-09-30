@@ -225,7 +225,9 @@ machine and returns — **no interactive shell, no stdin**. Use it for a one-off
 - A compute service with no image ever deployed 400s ("this service has no machines yet — deploy an
   image first, then retry") — `insta --agent deploy` it, then retry.
 
-`[service]` is optional under the same rule as `start`/`stop`/`status` above.
+`[service]` is optional under the same rule as `start`/`stop`/`status` above. For migrations, a 502
+or lost response does not prove the command did not run. Inspect the migration ledger and final
+schema before retrying; see [migration recovery](deploy.md#database-migrations).
 
 ## Getting an interactive shell (humans only)
 
@@ -257,7 +259,8 @@ Work the list in order — these cover ~all real failures seen so far:
    off`; new compute is born always-on) suspends when idle — its first request can take seconds.
    Poll up to ~60s before concluding failure.
 3. **Migration-gated startup**: `CMD migrate && server` with a hung migration = nothing listening,
-   empty logs. Fix the CMD to start the server regardless (see deploy.md).
+   empty logs. Inspect the migration ledger and final schema, then recover the migration without
+   hiding its failure (see [migration recovery](deploy.md#database-migrations)).
 4. **Read the logs**: `insta --agent compute logs [service] --branch <b> --limit 100` — crash loops, missing
    env, bad image arch. A bare read is ONE provider page (~100 lines); when the failure is older
    than that, window it: `--since 2h`, or `--from <unix|ISO>` / `--to`.
