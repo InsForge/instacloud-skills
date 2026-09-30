@@ -82,8 +82,9 @@ service that minted them and use canonical names inside that scope (`DATABASE_UR
 container gets a provider credential only through an explicit binding, and a non-primary same-type
 service is not in the bundle: for **postgres** read it with `insta --agent postgres url <name>`;
 for every other type there is no direct read at all — bind it, or read the env of a compute service
-it is bound to with `insta --agent secrets --service compute/<name>`. Bind
-the credentials a compute service needs,
+it is bound to with `insta --agent secrets --service compute/<name>`. Fetching the local bundle
+does not create bindings. `insta --agent service add compute` creates a service with no provider
+credential bindings inherited from other services. Bind the credentials each compute service needs,
 then deploy — or, if the service is already running, `insta --agent compute restart` (CLI ≥ 0.0.51) to pick
 the binding up without deploying a new one. It re-runs the image *reference* already recorded, so a
 service on a moving tag (`app:latest`) still gets whatever that tag resolves to now — see

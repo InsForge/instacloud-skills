@@ -121,7 +121,9 @@ first (`pg_version` on `insta --agent service list --json`, see [operate.md](ope
 **non-primary** same-type service's credentials are not in the bundle. Only **postgres** has a
 direct read for one (`insta --agent postgres url <name>`); for storage, redis, mysql and mongodb
 there is none — bind it to a compute service, then read that service's env with
-`insta --agent secrets --service compute/<name>`.
+`insta --agent secrets --service compute/<name>`. Fetching the local bundle does not create
+bindings. `insta --agent service add compute` creates a service with no provider credential bindings
+inherited from other services; bind each source it needs before deploying.
 
 ## Ship-from-zero (the whole chain)
 

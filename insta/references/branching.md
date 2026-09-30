@@ -103,7 +103,9 @@ schema travels as migration **files**:
 2. Verify the merged code builds locally *before* the slow deploy.
 3. `insta --agent branch switch main` → `insta --agent deploy` the merged code → run the new migration files
    against **main's** DB with `insta --agent compute exec app -- <migrate-cmd>` (the bound credentials are
-   already in the compute env; never gate startup on migrations — see deploy.md).
+   already in the compute env). Deploy and migration are non-atomic: a failed exec can leave
+   database changes applied. Inspect the migration ledger and final schema before retrying, using
+   the tool's tracking and locking (see [migration recovery](deploy.md#database-migrations)).
 4. **Validate on main's URL** — promotion isn't done until the live result checks out.
 5. `insta --agent branch delete feat-x` — tear down the branch env (may hit a `branch.delete` gate).
 

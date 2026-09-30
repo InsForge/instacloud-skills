@@ -99,8 +99,21 @@ without one falls back to the exact-version read in [operate.md](operate.md)).
 A non-primary service of **any other type** (storage, redis, mysql, mongodb) has no such read —
 bind it, or read that service's own env with `insta --agent secrets --service compute/<name>`.
 Otherwise its credentials run only where they are bound: the deployed app itself, or a one-shot
-`insta --agent compute exec app -- <cmd>` (≤180s, no stdin) — migrations run either way (never as a
-startup gate; see the gotchas below).
+`insta --agent compute exec app -- <cmd>` (≤180s, no stdin). See the migration recovery guidance below.
+
+## Database migrations
+
+Deploy and a subsequent `insta --agent compute exec app -- <migration-command>` are separate,
+non-atomic operations. Deploy success does not prove the migration succeeded, and exec failure
+does not roll back the deployment or database changes.
+
+A 502 or lost exec response can mean the command ran, including partial database changes.
+Do not automatically retry the exec command. On the intended branch and database, inspect the
+migration tool's ledger/status and the final schema before deciding what remains to run. Use the
+tool's migration tracking and locking; retry only when it can safely skip completed work or
+resume an idempotent migration. Otherwise recover the partial migration explicitly before retrying.
+Do not swallow migration failures or start an incompatible app against an unverified schema.
+Report deployment and migration outcomes separately, and verify the app after both are complete.
 
 ## Verify before reporting (non-negotiable)
 
@@ -131,9 +144,9 @@ app's expected status) → report deployed **with the URL**. Anything else → t
   when the code cannot change (a published image that hands the URL straight to its result
   backend) set a user secret to the URL plus `?ssl_cert_reqs=required`. That copy is static and
   no longer follows a rotation.
-- **Never gate container startup on migrations.** `CMD migrate && server` + a hung migration =
-  a "successful" deploy that serves nothing, with empty logs. Run migrations non-blocking:
-  `timeout 30 <migrate> || echo skipped; <start-server>`.
+- **A migration can block startup.** With `CMD migrate && server`, a hung migration prevents the
+  server from listening. Inspect the migration state and recover it using the
+  [migration guidance](#database-migrations); do not suppress migration failures.
 - **Cold start ≠ down.** A scale-to-zero compute service (`--no-always-on`, or switched off with `insta --agent compute always-on off`) suspends when idle; the first request wakes it. New compute is born always-on and does not.
 - **Redeploy replaces.** Compute is stateless — anything written to the container filesystem is
   gone on the next deploy. State belongs in the branch's postgres/storage.
