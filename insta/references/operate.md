@@ -170,12 +170,11 @@ to stop; those constraints lift after deletion.
 
 ## Pausing & resuming compute
 
-To take a service **offline on purpose** — a maintenance window, cost control, or parking a
-preview branch — use the lifecycle controls, which are a *persistent* override: a stopped/suspended
-service will **not** be re-woken by incoming traffic (unlike scale-to-zero's auto-wake).
+To keep a service **offline until you start it**, use `compute stop`. A normal `compute suspend`
+allows incoming traffic to wake the service; it does not clear an existing stop.
 
 - `insta --agent compute stop [service]` — clean shutdown; stays down until `start`.
-- `insta --agent compute suspend [service]` — snapshot RAM for a faster resume; stays down until `start`.
+- `insta --agent compute suspend [service]` — snapshot RAM for a faster resume; traffic can wake it unless it was already stopped.
 - `insta --agent compute start [service]` — bring it back online and re-enable auto-wake.
 - `insta --agent compute status [service]` — desired (your intent) vs. live runtime state.
 
