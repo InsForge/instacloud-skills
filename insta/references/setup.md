@@ -12,9 +12,9 @@ npx -y insta@latest --agent agent setup
 # staging is its own explicit one-liner (persists the env switch itself):
 npx -y insta@latest --agent agent setup --env staging
 # no Node? macOS/Linux ONLY — never on native Windows (PowerShell's curl alias + WSL bash shim break it):
-curl -fsSL agents.instacloud.com | sh
+curl -fsSL https://agents.instacloud.com | sh
 # staging curl route NOT LIVE YET — until its DNS ships, use the raw URL below:
-curl -fsSL agents.staging.instacloud.com | sh
+curl -fsSL https://agents.staging.instacloud.com | sh
 curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh | sh -s -- --agents --staging -y
 # CLI only:
 curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh | sh  # native binary, no Node; macOS/Linux
