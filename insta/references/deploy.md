@@ -1,6 +1,6 @@
 # Deploy
 
-Ship code to a branch's compute — image or source — and verify it actually serves.
+Ship code to a branch's compute — image or source — and verify it runs.
 
 ## Two modes (pick exactly one)
 
@@ -50,16 +50,29 @@ The CLI first asks the platform which lane serves the target service, then follo
 
 ## `--port` — the #1 deploy mistake
 
-**`--port` must equal the port the app LISTENS on inside the container** (`EXPOSE` / server bind).
+**For web services, `--port` must equal the port the app LISTENS on inside the container** (`EXPOSE` / server bind).
 A mismatch boots "successfully" but every request fails (`instance refused connection`). Bind to
 `0.0.0.0`, never `127.0.0.1`. On insta-oss it's also the host port for direct deploys; branch
 clones keep the listen port and shift the **host** mapping +1000.
+
+## Workers without a routed port
+
+On insta-compute, `insta --agent service add compute worker --port 0` creates a portless service.
+Deploy it with `insta --agent deploy . --group worker --port 0` or the equivalent `--image` form.
+Pass `--port 0` on each deploy; omitting it can select a Dockerfile `EXPOSE` or the default web port.
+No dummy listener is needed, and the deploy result has no public URL. Keep the worker always-on
+(the compute creation default): a suspended worker has no inbound request to wake it.
+
+Use a CLI whose `service add --help` and `deploy --help` describe `0` for workers; older CLIs reject
+it locally. Source deployments also need a platform version whose archive-deploy route accepts
+port zero. `insta --agent build --port` and `compute connect-repo --port` remain TCP-only
+(`1..65535`); do not pass them `--port 0`.
 
 ## Secrets at runtime
 
 Compute env is explicit. At deploy, the platform injects:
 
-- `PORT`
+- `PORT` for a routed port; portless workers (`--port 0`) get no automatic `PORT`
 - user-defined secrets visible to that compute service (`insta --agent secrets set`, project/branch or
   compute-scoped)
 - provider credentials you explicitly bound with `insta --agent secrets bind`
@@ -122,7 +135,10 @@ Report deployment and migration outcomes separately, and verify the app after bo
 
 ## Verify before reporting (non-negotiable)
 
-The deploy command exiting ≠ the app serving. After every deploy:
+For portless workers, check `insta --agent compute status worker`, runtime logs, and a representative
+job completing; there is no public URL to curl.
+
+For web services, the deploy command exiting ≠ the app serving. After every deploy:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}' <printed-url>   # poll ~every 3s, up to ~60s

@@ -196,7 +196,9 @@ unlinked, `insta --agent project create <dir-name>` → `insta --agent service a
 DB) + `insta --agent service add compute app` → bind needed service credentials into compute
 (`insta --agent secrets sources`, then `insta --agent secrets bind DATABASE_URL postgres/db --to compute/app`) →
 `insta --agent deploy . --port <the port the app listens on>` → **verify the printed URL serves** (below).
-The app reads `process.env` creds.
+The app reads `process.env` creds. For a portless insta-compute worker, use `--port 0` when adding
+compute and deploying, keep it always-on, and verify status/logs plus a completed job instead of a
+public URL (see [worker ports](references/deploy.md#workers-without-a-routed-port)).
 
 **"Set up / onboard / sign up":** cloud → `insta --agent login` (browser sign-in; relay the printed link
 if no browser opens) or `--email/--password`; then `insta --agent project create`. Local/oss → nothing to set up beyond the daemon.
