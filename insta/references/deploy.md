@@ -64,12 +64,17 @@ Otherwise use a [template](../cli-reference.md#templates) with `type: worker` an
 (no `port` or `healthcheck`); it does not require the CLI's zero-port flag support.
 With that CLI support, pass `--port 0` on each direct deploy; omitting it can select a Dockerfile
 `EXPOSE` or the default web port.
-No dummy listener is needed, and the deploy result has no public URL. Keep the worker always-on
+These portless paths need no listener, and their deploy result has no public URL. Keep the worker always-on
 (the compute creation default): a suspended worker has no inbound request to wake it.
 
 Source deployments with `--port 0` also need a platform version whose archive-deploy route accepts
 port zero. `insta --agent build --port` and `compute connect-repo --port` remain TCP-only
 (`1..65535`); do not pass them `--port 0`.
+
+For a source-only app without that CLI or archive-route support, use a Dockerfile whose `CMD`
+runs the worker and a listener on `0.0.0.0:$PORT`, then create/deploy with a matching positive
+`--port` (for example, `8080`). This fallback is a routed service: verify the configured listener
+and a completed worker job, and keep it always-on.
 
 ## Secrets at runtime
 
