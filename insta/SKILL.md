@@ -251,9 +251,9 @@ branch URL on success — that means the platform accepted and rolled the machin
 serves:
 
 1. Poll the printed URL (`curl -s -o /dev/null -w '%{http_code}'`) every ~3s for up to ~60s.
-   A scale-to-zero service (created with `--no-always-on`, or switched off with `insta --agent compute
-   always-on off`) cold-starts on the first request — allow a slow first hit. New compute services
-   are born always-on (since 2026-09-07) and skip this; see references/operate.md.
+   New compute services are born scale-to-zero, so an idle service cold-starts on the first
+   request — allow a slow first hit. One created with `--always-on` (or switched on with
+   `insta --agent compute always-on on`) skips this; see references/operate.md.
 2. `200` (or the app's expected status) → deployed; report the URL.
 3. Still failing → the ordered triage list in [operate.md](references/operate.md) (port mismatch
    and migration-gated startup account for most failures).
@@ -371,10 +371,11 @@ The gate mechanics and the relay procedure are above; the observe credential-aud
 timeline, and agent audit patterns are in [governance.md](references/governance.md).
 
 **Billing is by actual app usage** (vCPU·min / RAM GB·min actually consumed + storage + egress —
-not machine size × hours). New compute services are born always-on (since 2026-09-07): no cold
-starts, and the idle app's resident RAM bills at actual usage. Scale-to-zero (`--no-always-on` at
-create, or `insta --agent compute always-on off`) makes an idle service cost nearly nothing at the price of
-a cold start; postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
+not machine size × hours). New compute services are born scale-to-zero: an idle service costs nearly
+nothing at the price of a cold start, and inbound requests and outbound traffic both count as
+activity, so an app doing outbound work stays up while it works. Always-on (`--always-on` at create,
+or `insta --agent compute always-on on`) removes cold starts, and the idle app's resident RAM bills at
+actual usage; a worker (`--port 0`) is always-on regardless. Postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
 `insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
 **and machine COUNT** (`insta --agent compute scale` — horizontal): a new service is born at its plan's

@@ -60,8 +60,8 @@ Three consequences to internalize:
   isolation. `insta --agent agent manifest` shows what a branch really has.
 
 **Limits:** ≤10 branches per project (hard). `branch create` does **NOT** switch you; the idle mode
-is per service, not per branch — new compute is born always-on on every branch, `main` included, and
-`--no-always-on` / `insta --agent compute always-on off` makes a service scale to zero when idle (a cost lever;
+is per service, not per branch — new compute is born scale-to-zero on every branch, `main` included, and
+`--always-on` / `insta --agent compute always-on on` keeps a service's machines up when idle (a latency lever;
 compute capacity stays fixed).
 
 ## The branch loop (one unit of work)
