@@ -155,7 +155,7 @@ insta --agent service add postgres db                          # + redis/storage
 insta --agent service add compute app --port <n>               # REQUIRED: the bind below targets it
 insta --agent secrets bind DATABASE_URL postgres/db --to compute/app
 insta --agent deploy --image <registry/img> --port <n>          # works on every compute plane
-# or: insta --agent deploy <dir> --port <n>                     # any plane, no GitHub needed; Dockerfile optional on insta-compute, required on Fly-backed
+# or: insta --agent deploy <dir> --port <n>                     # any plane, no GitHub needed; Dockerfile optional on insta-compute, required on a legacy plane
 # or: insta --agent compute connect-repo <owner/repo> app       # attaches to THIS service; nixpacks if no Dockerfile; redeploys on push
 ```
 
@@ -239,19 +239,20 @@ lane shipped (insta-cli#197, and the `source-build` discovery endpoint is on pla
 prod), and it changes the answer this file used to give. Measured on staging, 2026-09-11: a
 Dockerfile-less `render-examples/express-hello-world` checkout, `insta --agent deploy . --port 3000`,
 **HTTP 200** — packed 7 files, `deploying … via the gateway (nixpacks)`, built, deployed. **66
-seconds with a warm builder, 6m28s cold** (the remote builder is Fly's; warm it with a throwaway
+seconds with a warm builder, 6m28s cold** (the remote builder is shared; warm it with a throwaway
 build before anything time-sensitive).
 
 How the CLI decides, so you can predict it: it asks `GET /projects/:id/source-build?branch=&group=`
-and the **platform** answers `flyctl`, `archive`, `local-docker` or `none`. Measured: a Fly-backed
-service answers `{"lane":"flyctl"}`, an insta-compute service answers `{"lane":"archive"}` with the
-server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files). A platform too old to have
-the endpoint answers 404 and the CLI falls back to the old flyctl path unchanged. So:
+and the **platform** answers `flyctl` (a legacy wire value), `archive`, `local-docker` or `none`.
+Measured: a legacy service answers `{"lane":"flyctl"}`, an insta-compute service answers
+`{"lane":"archive"}` with the server's own limits (256 MiB archive, 1 GiB extracted, 10,000 files).
+A platform too old to have the endpoint answers 404 and the CLI falls back to the old legacy-lane
+path unchanged. So:
 
 - **insta-compute target:** `deploy <dir>` packs the directory and the gateway builds it — with the
   Dockerfile if one is present, **nixpacks if not.** No GitHub, no App authorization: this removes
   the one step in this runbook only a human could perform for a private repo.
-- **Fly-backed target:** `deploy <dir>` still needs a Dockerfile (the flyctl lane builds it). A Fly
+- **Legacy-plane target:** `deploy <dir>` still needs a Dockerfile (the legacy lane builds it). A Fly
   app has one, so it works; a buildpack app does not, so use `connect-repo` there.
 
 **`connect-repo` is still right for three things:** a private repo the user wants redeployed on
@@ -702,13 +703,13 @@ data loss. "If verification fails, just point back at the source" is wrong once 
 |---|---|
 | **A binding is not live until a deploy** | Env is materialized into machine config at deploy time. `insta --agent secrets bind` changes the rules only; the running machine keeps its old env until `insta --agent deploy` (first time) or `insta --agent compute restart` (already running). Until then **the app still writes to the old database.** |
 | **`--port` must equal the listen port** | `PORT` is injected as the routed port. An app reading `$PORT` is fine; a hardcoded port boots "successfully" and refuses every request. Source deploys default from the Dockerfile's last `EXPOSE` — read the line the CLI prints and confirm it. |
-| **Four routes get code in** | `insta --agent deploy --image` (every plane); `insta --agent deploy <dir>` — on **insta-compute** the directory is packed, uploaded and built by the build gateway, with its Dockerfile or with nixpacks when there is none, so a checkout of the source app deploys as-is; on **Fly-backed** compute it needs the dir's own Dockerfile. `insta --agent compute connect-repo <owner/repo> <service>` (attaches to an EXISTING service and builds its Dockerfile, or detects the runtime with nixpacks when there is none — `--public` needs no GitHub App, `--root-dir` handles a monorepo); or the console's repo binding, which CREATES a service rather than attaching. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta --agent upgrade` and retry. |
+| **Four routes get code in** | `insta --agent deploy --image` (every plane); `insta --agent deploy <dir>` — on **insta-compute** the directory is packed, uploaded and built by the build gateway, with its Dockerfile or with nixpacks when there is none, so a checkout of the source app deploys as-is; on **legacy-plane** compute it needs the dir's own Dockerfile. `insta --agent compute connect-repo <owner/repo> <service>` (attaches to an EXISTING service and builds its Dockerfile, or detects the runtime with nixpacks when there is none — `--public` needs no GitHub App, `--root-dir` handles a monorepo); or the console's repo binding, which CREATES a service rather than attaching. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta --agent upgrade` and retry. |
 | **Postgres scales to zero** | Keep the pool's `idleTimeoutMillis` under the suspend window, or the first request after a wake fails on a dead pooled connection. |
 | **No bulk env import** | `insta --agent secrets set <name>` takes one variable per call (value as an argument or on stdin). Loop over the source's export, and drop the platform's own vars — `HEROKU_*`, `RAILWAY_*`, `DYNO`, `PORT`. |
 | **Reading secrets back adds quotes** | both `insta --agent secrets --print` and `-o <file>` emit `NAME="value"`. `docker run --env-file` does **not** strip them, so the value arrives with a literal `"` and the app fails obscurely (measured: celery's `KeyError: 'No such transport: '`). Strip the quotes, or get the value another way. |
 | **`insta --agent secrets list` prints names only** | It cannot reveal a truncated or mis-escaped value. To compare values, use `insta --agent secrets --json` (plaintext `{name: value}`) — **not** bare `--print`, which double-quotes every value and does not escape embedded newlines, so a multi-line value breaks line-oriented parsing and every key then digests differently from the source export. |
 | **A schedule calls an HTTP endpoint, it does not run a command** | `insta --agent cron create <name> '<expr>' --service <compute> --path </your/endpoint>` is the app-level scheduler, and it **supersedes the stopgaps below** for anything the source ran as a scheduled *command*. The shape differs from every source's cron: theirs runs a command in a container, this calls a **route** — so the work moves into a handler on a compute service you already have, and the schedule calls it. No always-on needed; a scale-to-zero service is woken for the run. Expressions are **UTC**, so check the source's timezone before copying one across, and make the handler idempotent on the `insta-cron-run-id` header (delivery is at-least-once). Two stopgaps remain worth knowing, for work that genuinely cannot become a route. In-process (node-cron, APScheduler, whenever) inside a **web** service: keep it always-on, since a suspended service stops firing, and remember **replicas multiply every tick** (`insta --agent compute scale` allows 1–10, so two replicas run each job twice). Or **`pg_cron`**, which is **preloaded but not created**: measured on prod, `shared_preload_libraries` is `pg_stat_monitor,pgaudit,pg_cron,pg_stat_statements` and `pg_available_extensions` lists `pg_cron 1.6` with a null `installed_version`, so you must run `CREATE EXTENSION pg_cron` yourself (it succeeds). One schedule, no replica problem, SQL-only — **and it needs `insta --agent postgres always-on on`**, because postgres defaults to scale-to-zero ("off = default scale-to-zero (idle instance suspends)") and a suspended database fires nothing. Both are now **fallbacks, not the answer** — reach for `insta --agent cron create` first and use these only when the work cannot be reached over HTTP. |
-| **Workers** | Every CLI `--port` rejects `0`, and a deploy without one routes and health-gates `8080` (a source deploy: its Dockerfile's `EXPOSE`), so a worker shipped with `insta --agent deploy` must listen on its port. The only portless path is a template service declared `type: worker` (prebuilt image, always-on, no `port` or `healthcheck`; see Templates in `../cli-reference.md`). Otherwise give the worker a port and let it listen — the machine check is **TCP, not HTTP**, so `require('net').createServer().listen(process.env.PORT)` is enough (no framework, no `/health`). Never `--no-always-on`: a suspended worker has no inbound traffic to wake it. |
+| **Workers** | First check that the installed CLI's `service add --help` and `deploy --help` advertise worker port zero. If so, use `--port 0` with `service add compute` and each `deploy` (source or `--image`) on insta-compute. Otherwise use a template `type: worker` with a prebuilt image (always-on, no `port` or `healthcheck`), or the source-only listener fallback in [worker ports](deploy.md#workers-without-a-routed-port). Source port-zero deploys also require platform support; see [worker ports](deploy.md#workers-without-a-routed-port). `build --port` and `compute connect-repo --port` remain TCP-only (`1..65535`). Keep workers always-on: a suspended worker has no inbound traffic to wake it. Portless paths need no listener or public URL; verify status/logs and a completed job. |
 
 ## Command mapping
 

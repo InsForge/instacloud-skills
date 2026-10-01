@@ -98,7 +98,7 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent org list` / `create` | `insta_list_orgs` / `insta_create_org` |
 | `insta --agent project list/create/delete` | `insta_list_projects` / `insta_create_project` / `insta_get_project` / `insta_delete_project` |
 | region discovery | `insta_list_regions` |
-| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage) |
+| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage and `pgVersion?` for postgres) |
 | `insta --agent storage set-access` · `insta --agent postgres public-access on\|off` | `insta_set_service_access` (postgres: `public: false` = not reachable from the internet; needs private access on first; the result carries `impact.warnings` and a ~30s `notice`, and there is no preview, so read what it returns). `insta --agent postgres private-access` has **no MCP tool**: postgres settings are not exposed over MCP, so use the CLI or the console |
 | `insta --agent compute scale` | `insta_scale_service` |
 | `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_set_compute_state` / `insta_get_service_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
