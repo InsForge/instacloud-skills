@@ -57,14 +57,17 @@ clones keep the listen port and shift the **host** mapping +1000.
 
 ## Workers without a routed port
 
-On insta-compute, `insta --agent service add compute worker --port 0` creates a portless service.
-Deploy it with `insta --agent deploy . --group worker --port 0` or the equivalent `--image` form.
-Pass `--port 0` on each deploy; omitting it can select a Dockerfile `EXPOSE` or the default web port.
+First check the installed CLI's `service add --help` and `deploy --help`. Only if both advertise
+worker port zero, use `insta --agent service add compute worker --port 0` and deploy it with
+`insta --agent deploy . --group worker --port 0` or the equivalent `--image` form on insta-compute.
+Otherwise use a [template](../cli-reference.md#templates) with `type: worker` and a prebuilt image
+(no `port` or `healthcheck`); it does not require the CLI's zero-port flag support.
+With that CLI support, pass `--port 0` on each direct deploy; omitting it can select a Dockerfile
+`EXPOSE` or the default web port.
 No dummy listener is needed, and the deploy result has no public URL. Keep the worker always-on
 (the compute creation default): a suspended worker has no inbound request to wake it.
 
-Use a CLI whose `service add --help` and `deploy --help` describe `0` for workers; older CLIs reject
-it locally. Source deployments also need a platform version whose archive-deploy route accepts
+Source deployments with `--port 0` also need a platform version whose archive-deploy route accepts
 port zero. `insta --agent build --port` and `compute connect-repo --port` remain TCP-only
 (`1..65535`); do not pass them `--port 0`.
 
