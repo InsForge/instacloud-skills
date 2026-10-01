@@ -1,6 +1,6 @@
 # Deploy
 
-Ship code to a branch's compute — image or source — and verify it actually serves.
+Ship code to a branch's compute — image or source — and verify it runs.
 
 ## Two modes (pick exactly one)
 
@@ -50,16 +50,39 @@ The CLI first asks the platform which lane serves the target service, then follo
 
 ## `--port` — the #1 deploy mistake
 
-**`--port` must equal the port the app LISTENS on inside the container** (`EXPOSE` / server bind).
+**For web services, `--port` must equal the port the app LISTENS on inside the container** (`EXPOSE` / server bind).
 A mismatch boots "successfully" but every request fails (`instance refused connection`). Bind to
 `0.0.0.0`, never `127.0.0.1`. On insta-oss it's also the host port for direct deploys; branch
 clones keep the listen port and shift the **host** mapping +1000.
+
+## Workers without a routed port
+
+First check the installed CLI's `service add --help` and `deploy --help`. Only if both advertise
+worker port zero, use `insta --agent service add compute worker --port 0` and deploy it with
+`insta --agent deploy . --group worker --port 0` or the equivalent `--image` form on insta-compute.
+Otherwise use a [template](../cli-reference.md#templates) with `type: worker` and a prebuilt image
+(no `port` or `healthcheck`); it does not require the CLI's zero-port flag support.
+With that CLI support, pass `--port 0` on each direct deploy; omitting it can select a Dockerfile
+`EXPOSE` or the default web port.
+These portless paths need no listener, and their deploy result has no public URL. The platform keeps a
+port-0 worker always-on by itself (born on when created with `--port 0`, switched on by its first
+`--port 0` deploy, and `always-on off` is refused): a suspended worker has no inbound request to wake it.
+
+Source deployments with `--port 0` also need a platform version whose archive-deploy route accepts
+port zero. `insta --agent build --port` and `compute connect-repo --port` remain TCP-only
+(`1..65535`); do not pass them `--port 0`.
+
+For a source-only app without that CLI or archive-route support, use a Dockerfile whose `CMD`
+runs the worker and a listener on `0.0.0.0:$PORT`, then create/deploy with a matching positive
+`--port` (for example, `8080`). This fallback is a routed service: verify the configured listener
+and a completed worker job, and create it with `--always-on` (new compute is born scale-to-zero, and a
+positive port is not treated as a worker).
 
 ## Secrets at runtime
 
 Compute env is explicit. At deploy, the platform injects:
 
-- `PORT`
+- `PORT` for a routed port; portless workers (`--port 0`) get no automatic `PORT`
 - user-defined secrets visible to that compute service (`insta --agent secrets set`, project/branch or
   compute-scoped)
 - provider credentials you explicitly bound with `insta --agent secrets bind`
@@ -99,18 +122,39 @@ without one falls back to the exact-version read in [operate.md](operate.md)).
 A non-primary service of **any other type** (storage, redis, mysql, mongodb) has no such read —
 bind it, or read that service's own env with `insta --agent secrets --service compute/<name>`.
 Otherwise its credentials run only where they are bound: the deployed app itself, or a one-shot
-`insta --agent compute exec app -- <cmd>` (≤180s, no stdin) — migrations run either way (never as a
-startup gate; see the gotchas below).
+`insta --agent compute exec app -- <cmd>` (≤180s, no stdin). See the migration recovery guidance below.
+
+## Database migrations
+
+Deploy and a subsequent `insta --agent compute exec app -- <migration-command>` are separate,
+non-atomic operations. Deploy success does not prove the migration succeeded, and exec failure
+does not roll back the deployment or database changes.
+
+Run migrations separately from the container's startup `CMD`. Deploy then exec only when the app
+works with the current schema (expand/contract). Otherwise apply a schema expansion compatible
+with the running app through a direct DB connection or an existing compatible migration runner
+before deploying the dependent code.
+
+A 502 or lost exec response can mean the command ran, including partial database changes.
+Do not automatically retry the exec command. On the intended branch and database, inspect the
+migration tool's ledger/status and the final schema before deciding what remains to run. Use the
+tool's migration tracking and locking; retry only when it can safely skip completed work or
+resume an idempotent migration. Otherwise recover the partial migration explicitly before retrying.
+Do not swallow migration failures or start an incompatible app against an unverified schema.
+Report deployment and migration outcomes separately, and verify the app after both are complete.
 
 ## Verify before reporting (non-negotiable)
 
-The deploy command exiting ≠ the app serving. After every deploy:
+For portless workers, check `insta --agent compute status worker`, runtime logs, and a representative
+job completing; there is no public URL to curl.
+
+For web services, the deploy command exiting ≠ the app serving. After every deploy:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}' <printed-url>   # poll ~every 3s, up to ~60s
 ```
 
-A scale-to-zero service (`--no-always-on` at create, or `insta --agent compute always-on off`) cold-starts on the first request — allow a slow first hit; new compute services are born always-on (since 2026-09-07) and skip this. `200` (or the
+New compute services are born scale-to-zero, so an idle one cold-starts on the first request — allow a slow first hit; a service created with `--always-on` (or switched on with `insta --agent compute always-on on`) skips this. `200` (or the
 app's expected status) → report deployed **with the URL**. Anything else → triage per
 [operate.md](operate.md); never claim success you didn't observe.
 
@@ -122,10 +166,20 @@ app's expected status) → report deployed **with the URL**. Anything else → t
 - **A `rediss://` `REDIS_URL` needs SNI.** It points at a shared TLS port that routes on the
   handshake's hostname and drops one without it, and ioredis sends none from a bare URL:
   `new Redis(url, { tls: { servername: new URL(url).hostname } })`.
-- **Never gate container startup on migrations.** `CMD migrate && server` + a hung migration =
-  a "successful" deploy that serves nothing, with empty logs. Run migrations non-blocking:
-  `timeout 30 <migrate> || echo skipped; <start-server>`.
-- **Cold start ≠ down.** A scale-to-zero compute service (`--no-always-on`, or switched off with `insta --agent compute always-on off`) suspends when idle; the first request wakes it. New compute is born always-on and does not.
+- **Celery's Redis result backend refuses a bare `rediss://` URL.** The broker takes the bound
+  `REDIS_URL` as is. `result_backend` does not, and raises
+  `ValueError: A rediss:// URL must have parameter ssl_cert_reqs` before it connects (measured,
+  celery 5.6.3). Keep the binding and set the TLS option in config instead of the URL:
+  `redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_REQUIRED}` (`CELERY_REDIS_BACKEND_USE_SSL`
+  under Django's `CELERY_` namespace), with `import ssl` at the top of that settings module. Only
+  when the code cannot change (a published image that hands the URL straight to its result
+  backend) set a user secret to the URL plus `?ssl_cert_reqs=required`. That copy is static and
+  no longer follows a rotation.
+- **A migration can block startup.** With `CMD migrate && server`, a hung migration prevents the
+  server from listening. Move migrations into a separate step under the
+  [schema compatibility requirements](#database-migrations), inspecting any partial migration
+  state before retrying; do not suppress migration failures.
+- **Cold start ≠ down.** A scale-to-zero compute service (the default for new compute) suspends when idle; the first request wakes it. One created with `--always-on`, or switched on with `insta --agent compute always-on on`, does not.
 - **Redeploy replaces.** Compute is stateless — anything written to the container filesystem is
   gone on the next deploy. State belongs in the branch's postgres/storage.
 

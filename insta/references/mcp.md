@@ -25,6 +25,7 @@ client. **The CLI is the only path** for the things a remote server cannot or mu
 | `insta --agent deploy <dir>` (source builds) | needs a local build context; `insta_deploy` takes prebuilt image URLs only |
 | `insta --agent agent observe` hook / `insta --agent agent setup` | local-machine operations |
 | `insta --agent postgres limits` (database machine spec) | not yet exposed as an MCP tool |
+| `insta --agent postgres restart` (apply restart-only `ALTER SYSTEM` settings) | not yet exposed as an MCP tool |
 | `insta --agent compute scale --remove <instance>` (drop one named instance) | not yet exposed as an MCP tool; `insta_scale_service` sets a count only |
 
 ## Connecting
@@ -78,7 +79,7 @@ The distinct names matter: registration is idempotent by name, so a shared name 
 staging install silently pointed at the prod server. Because the names differ, **both can be
 registered on one machine at once** — check which you're talking to with `insta --agent env`.
 
-`insta --agent agent setup --env staging` (or `curl -fsSL agents.staging.instacloud.com | sh`) switches
+`insta --agent agent setup --env staging` (or `curl -fsSL https://agents.staging.instacloud.com | sh`) switches
 the environment and registers staging's server in one step (CLI ≥ 0.0.38 — bare `agent setup`
 always targets prod, so a bare re-run after `env use staging` would switch the machine back).
 `INSTA_MCP_URL` still overrides outright, for a self-hosted or tunnelled server.
@@ -98,8 +99,8 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent org list` / `create` | `insta_list_orgs` / `insta_create_org` |
 | `insta --agent project list/create/delete` | `insta_list_projects` / `insta_create_project` / `insta_get_project` / `insta_delete_project` |
 | region discovery | `insta_list_regions` |
-| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage) |
-| `insta --agent storage set-access` | `insta_set_service_access` |
+| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage and `pgVersion?` for postgres) |
+| `insta --agent storage set-access` · `insta --agent postgres public-access on\|off` | `insta_set_service_access` (postgres: `public: false` = not reachable from the internet; needs private access on first; the result carries `impact.warnings` and a ~30s `notice`, and there is no preview, so read what it returns). `insta --agent postgres private-access` has **no MCP tool**: postgres settings are not exposed over MCP, so use the CLI or the console |
 | `insta --agent compute scale` | `insta_scale_service` |
 | `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_set_compute_state` / `insta_get_service_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
 | `insta --agent compute exec [service] -- <command>` | `insta_exec_compute_command` (`name?`/`branch?`/`command`/`timeoutSec?`) |

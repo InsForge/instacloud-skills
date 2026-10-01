@@ -17,7 +17,8 @@ you to drop. Note the builder **ignores the repo's `fly.toml`** on the insta-com
 lane (the build gateway writes its own config; caller config never reaches it), so nothing
 in that file affects the build here. `[processes]` maps onto compute services, and
 A volume carries the caveat in `migrate/railway.md`: creating one on the target copies nothing, so
-download the source's contents while its service is still running. **The one real obstacle is secrets:** `fly secrets list`
+download the source's contents while its service is still running. Its `[mounts]` `destination` is
+the `--mount-path` value. **The one real obstacle is secrets:** `fly secrets list`
 returns names and digests only, because "the actual value of the secret is only available to the
 application", so there is no export. Read them off the running machine before you stop it, **one name at a time, never the whole env**, and
 piped so the value never reaches your output:

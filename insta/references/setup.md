@@ -12,9 +12,9 @@ npx -y insta@latest --agent agent setup
 # staging is its own explicit one-liner (persists the env switch itself):
 npx -y insta@latest --agent agent setup --env staging
 # no Node? macOS/Linux ONLY — never on native Windows (PowerShell's curl alias + WSL bash shim break it):
-curl -fsSL agents.instacloud.com | sh
+curl -fsSL https://agents.instacloud.com | sh
 # staging curl route NOT LIVE YET — until its DNS ships, use the raw URL below:
-curl -fsSL agents.staging.instacloud.com | sh
+curl -fsSL https://agents.staging.instacloud.com | sh
 curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh | sh -s -- --agents --staging -y
 # CLI only:
 curl -fsSL https://raw.githubusercontent.com/InsForge/insta-cli/main/install.sh | sh  # native binary, no Node; macOS/Linux
@@ -121,7 +121,9 @@ first (`pg_version` on `insta --agent service list --json`, see [operate.md](ope
 **non-primary** same-type service's credentials are not in the bundle. Only **postgres** has a
 direct read for one (`insta --agent postgres url <name>`); for storage, redis, mysql and mongodb
 there is none — bind it to a compute service, then read that service's env with
-`insta --agent secrets --service compute/<name>`.
+`insta --agent secrets --service compute/<name>`. Fetching the local bundle does not create
+bindings. `insta --agent service add compute` creates a service with no provider credential bindings
+inherited from other services; bind each source it needs before deploying.
 
 ## Ship-from-zero (the whole chain)
 

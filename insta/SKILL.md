@@ -82,8 +82,9 @@ service that minted them and use canonical names inside that scope (`DATABASE_UR
 container gets a provider credential only through an explicit binding, and a non-primary same-type
 service is not in the bundle: for **postgres** read it with `insta --agent postgres url <name>`;
 for every other type there is no direct read at all — bind it, or read the env of a compute service
-it is bound to with `insta --agent secrets --service compute/<name>`. Bind
-the credentials a compute service needs,
+it is bound to with `insta --agent secrets --service compute/<name>`. Fetching the local bundle
+does not create bindings. `insta --agent service add compute` creates a service with no provider
+credential bindings inherited from other services. Bind the credentials each compute service needs,
 then deploy — or, if the service is already running, `insta --agent compute restart` (CLI ≥ 0.0.51) to pick
 the binding up without deploying a new one. It re-runs the image *reference* already recorded, so a
 service on a moving tag (`app:latest`) still gets whatever that tag resolves to now — see
@@ -195,7 +196,11 @@ unlinked, `insta --agent project create <dir-name>` → `insta --agent service a
 DB) + `insta --agent service add compute app` → bind needed service credentials into compute
 (`insta --agent secrets sources`, then `insta --agent secrets bind DATABASE_URL postgres/db --to compute/app`) →
 `insta --agent deploy . --port <the port the app listens on>` → **verify the printed URL serves** (below).
-The app reads `process.env` creds.
+The app reads `process.env` creds. For a portless insta-compute worker, first check that the installed
+CLI's `service add --help` and `deploy --help` advertise worker port zero before using `--port 0`.
+Otherwise use a template `type: worker` with a prebuilt image, or the
+[source-only listener fallback](references/deploy.md#workers-without-a-routed-port). Keep workers
+always-on. Portless deployments have no public URL; verify status/logs plus a completed job.
 
 **"Set up / onboard / sign up":** cloud → `insta --agent login` (browser sign-in; relay the printed link
 if no browser opens) or `--email/--password`; then `insta --agent project create`. Local/oss → nothing to set up beyond the daemon.
@@ -246,9 +251,9 @@ branch URL on success — that means the platform accepted and rolled the machin
 serves:
 
 1. Poll the printed URL (`curl -s -o /dev/null -w '%{http_code}'`) every ~3s for up to ~60s.
-   A scale-to-zero service (created with `--no-always-on`, or switched off with `insta --agent compute
-   always-on off`) cold-starts on the first request — allow a slow first hit. New compute services
-   are born always-on (since 2026-09-07) and skip this; see references/operate.md.
+   New compute services are born scale-to-zero, so an idle service cold-starts on the first
+   request — allow a slow first hit. One created with `--always-on` (or switched on with
+   `insta --agent compute always-on on`) skips this; see references/operate.md.
 2. `200` (or the app's expected status) → deployed; report the URL.
 3. Still failing → the ordered triage list in [operate.md](references/operate.md) (port mismatch
    and migration-gated startup account for most failures).
@@ -315,6 +320,7 @@ usually enough, two at most:
 | Migrate an existing app in ("migrate my Render/Railway service to InstaCloud", "move off Heroku/Railway/Fly/Render", "import my app", "bring my app over") | [migrate.md](references/migrate.md) **plus** the one source file you need from `references/migrate/` (`render.md`, `railway.md`, `fly.md`, `insforge.md`) | the ordered cutover with pass conditions and its rollback boundary, the InstaCloud-side semantics that bite (a binding needs a deploy, no bulk env import, cron is HTTP-not-command, workers), command + addon mapping, per-source (each source now has its own file, read alongside migrate.md not instead of it) deltas |
 | Branch environments, parallel agents, promotion ("preview env", "sandbox per task", "merge to main") | [branching.md](references/branching.md) | **the data-forking env model** (what actually clones), branch loop, 1:1:1 worktree pattern + dispatch brief, promotion, migration discipline |
 | Approvals, policy, audit, credential scanning | [governance.md](references/governance.md) | gates catalog, the approval relay, events timeline, observe hook, agent audit patterns |
+| Take a postgres database off the internet, or connect compute to it privately ("private database", "close public access", `DATABASE_PRIVATE_URL`) | [operate.md → Postgres network access](references/operate.md#postgres-network-access) | `private-access on` mints `DATABASE_PRIVATE_URL` (InstaCloud compute only, not laptops/CI), rebinding, the impact preview before `public-access off`, the ~30s propagation, and that closing breaks external clients, CI and local dev |
 | Check health or debug failures | [operate.md](references/operate.md) | status/manifest triage, ordered deploy-failure list, metrics/logs, cloud-vs-oss differences |
 | Command lookup | [cli-reference.md](cli-reference.md) | the full CLI catalog with flags and gates |
 | Remote MCP tools ("connect a connector", `insta_*` tools available) | [mcp.md](references/mcp.md) | connecting clients, tool ↔ CLI mapping, what stays CLI-only |
@@ -366,10 +372,11 @@ The gate mechanics and the relay procedure are above; the observe credential-aud
 timeline, and agent audit patterns are in [governance.md](references/governance.md).
 
 **Billing is by actual app usage** (vCPU·min / RAM GB·min actually consumed + storage + egress —
-not machine size × hours). New compute services are born always-on (since 2026-09-07): no cold
-starts, and the idle app's resident RAM bills at actual usage. Scale-to-zero (`--no-always-on` at
-create, or `insta --agent compute always-on off`) makes an idle service cost nearly nothing at the price of
-a cold start; postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
+not machine size × hours). New compute services are born scale-to-zero: an idle service costs nearly
+nothing at the price of a cold start, and inbound requests and outbound traffic both count as
+activity, so an app doing outbound work stays up while it works. Always-on (`--always-on` at create,
+or `insta --agent compute always-on on`) removes cold starts, and the idle app's resident RAM bills at
+actual usage; a worker (`--port 0`) is always-on regardless. Postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
 `insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
 **and machine COUNT** (`insta --agent compute scale` — horizontal): a new service is born at its plan's

@@ -57,23 +57,24 @@ stats` on the branch's containers directly if you must, and don't retry the CLI 
 **Billing is always by actual app usage** — vCPU·min burned, GB·min of RAM resident, storage,
 egress — never by machine size × hours. The idle mode only changes what "idle" consumes:
 
-- **Always-on (the birth default for compute since 2026-09-07, all plans)**: machines never
+- **Always-on (opt-in for compute, all plans; automatic for a worker)**: machines never
   suspend, so there are **no cold starts** — but the idle app keeps its RAM resident (plus a
   trickle of vCPU), and that real usage bills continuously (roughly $1–2.50/month for an idle
   minimum-spec app, mostly RAM).
-- **Scale-to-zero (opt-in for compute; the default for postgres)**: idle machines suspend and
+- **Scale-to-zero (the default for new compute and for postgres)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
   start (typically a few seconds) on the first request after idling. On the insta-compute plane
-  (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means 5 minutes
-  with no inbound traffic through the router and no shell session: CPU work and log output never
-  count, and outbound traffic keeps it awake only where a regional setting enables that, so do not
-  rely on it. Background
-  work that serves no requests (a bot polling its platform, a queue consumer, an in-process cron)
-  therefore needs always-on.
+  (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means no
+  inbound traffic through the router, no shell session, and no outbound traffic for the plane's
+  idle window — so an app doing outbound work (model calls, polling its platform) stays up while it
+  works. CPU work and log output never count: background work that is quiet on the network (a
+  CPU-only job, an in-process cron waiting for its next run, a consumer holding a near-silent
+  connection) needs always-on, and once suspended nothing but an inbound request wakes it. A worker
+  (port 0) is always-on automatically.
 
 Flip it any time — it is a latency/cost dial, not a plan feature:
 
-- `insta --agent service add compute <name> --no-always-on` — create scale-to-zero (`--always-on` states the default explicitly).
+- `insta --agent service add compute <name> --always-on` — create always-on (`--no-always-on` states the default explicitly; refused with `--port 0`).
 - `insta --agent compute always-on on|off [service]` — toggle a live service.
 - `insta --agent postgres always-on on|off [service]` — the same dial for a postgres service:
   `off` (default) suspends the idle instance and cold-starts the first connection after idle;
@@ -108,6 +109,49 @@ insta --agent postgres limits --memory 8Gi --cpu 4     # same dial for postgres
 up-only). `insta --agent compute limits --memory` is the only control now; resize postgres with
 `insta --agent postgres limits` and grow its disk with `insta --agent postgres volume`.
 
+## Postgres network access
+
+A postgres database is born **public**: `DATABASE_URL` reaches it from anywhere on the internet
+(password-authenticated, TLS). Two switches change that, both per branch and inherited by a branch
+forked from it:
+
+```bash
+insta --agent postgres private-access [service]          # read: public on/off, private on/off
+insta --agent postgres private-access on [service]       # mint DATABASE_PRIVATE_URL beside DATABASE_URL
+insta --agent secrets bind DATABASE_URL postgres/db --source-name DATABASE_PRIVATE_URL --to compute/app
+insta --agent compute restart app                        # the rebinding reaches the running machine
+insta --agent postgres public-access off [service]       # preview what breaks, confirm, close
+```
+
+- **Private access** (`private-access on`) adds `DATABASE_PRIVATE_URL`: the same database over the
+  private network lane. **When to use it: from compute services on InstaCloud (insta-compute).** Not
+  from a laptop, CI, or the legacy compute plane: its host only resolves inside InstaCloud networks.
+  `DATABASE_URL` is not changed, so turning it on moves nothing until a compute is rebound to it.
+- **Closing public access** (`public-access off`) makes the database **not reachable from the
+  internet**: the public endpoint refuses every connection (`FATAL 28000`). It needs private access
+  on first. **It breaks every client outside InstaCloud compute**: external services, CI, local
+  development, `insta --agent postgres url|connect` from this machine, and any compute still on
+  `DATABASE_URL` or on the legacy plane.
+- **Read the impact before closing.** The command prints the platform's preview first. It names each
+  compute that will lose the database, says whether the console can still reach it, and always
+  ends with the external-clients warning. Then it asks. An agent has no terminal, so it gets exit 2
+  and the preview instead. **Relay the preview to the human and get their go-ahead** before
+  re-running with `--yes`. It is also gated: `service.setAccess` may return an approval.
+- **About 30 seconds to take effect.** The proxy caches routes, so for up to ~30s after a change a
+  new connection may still see the old setting. Wait before verifying that a closed endpoint refuses.
+- **Say "not reachable from the internet", and no more than that.** Other workloads on the
+  InstaCloud compute plane can still reach the private endpoint and authenticate with the
+  password; the **password** is what keeps them out, so treat it like any other credential.
+- Re-open any time with `insta --agent postgres public-access on`. It is never refused. To turn
+  private access off, re-open public access first.
+- **Not yet available** on a deployment where the lane is not enabled: both `private-access on` and
+  `public-access off` say so, and change nothing. A database in a region without a private lane
+  answers that nothing was minted; `DATABASE_URL` keeps working.
+
+MCP: `insta_set_service_access` (`type: postgres`, `public: false`) closes or re-opens the endpoint
+and returns the same `impact` and `notice`. It does not preview first, so read the warnings it
+returns and act on them. There is no MCP tool for private access; use the CLI or the console.
+
 ## Compute volumes
 
 Compute persistent `/data` volumes are **not create-time only**:
@@ -126,12 +170,11 @@ to stop; those constraints lift after deletion.
 
 ## Pausing & resuming compute
 
-To take a service **offline on purpose** — a maintenance window, cost control, or parking a
-preview branch — use the lifecycle controls, which are a *persistent* override: a stopped/suspended
-service will **not** be re-woken by incoming traffic (unlike scale-to-zero's auto-wake).
+To keep a service **offline until you start it**, use `compute stop`. A normal `compute suspend`
+allows incoming traffic to wake the service; it does not clear an existing stop.
 
 - `insta --agent compute stop [service]` — clean shutdown; stays down until `start`.
-- `insta --agent compute suspend [service]` — snapshot RAM for a faster resume; stays down until `start`.
+- `insta --agent compute suspend [service]` — snapshot RAM for a faster resume; traffic can wake it unless it was already stopped.
 - `insta --agent compute start [service]` — bring it back online and re-enable auto-wake.
 - `insta --agent compute status [service]` — desired (your intent) vs. live runtime state.
 
@@ -180,7 +223,7 @@ Rules worth knowing before you call it:
   its port, the machines are rolled back — best-effort — to the config they were serving and the
   command reports the failure. That verdict is the useful part: a restart that "fails" here is
   telling you the app itself is broken, not the platform.
-- **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born always-on since 2026-09-07, so this applies to services switched to scale-to-zero). What happens to a
+- **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born scale-to-zero, so this applies to every compute service not created or switched always-on). What happens to a
   scaled-to-zero machine depends on the compute plane behind your deployment — `insta --agent agent manifest
   --json` names it on each compute row (`provider`: `insta-compute`, a legacy value, or the neutral `compute`
   when the platform did not report one, in which case assume neither behaviour). On a legacy plane it
@@ -225,7 +268,9 @@ machine and returns — **no interactive shell, no stdin**. Use it for a one-off
 - A compute service with no image ever deployed 400s ("this service has no machines yet — deploy an
   image first, then retry") — `insta --agent deploy` it, then retry.
 
-`[service]` is optional under the same rule as `start`/`stop`/`status` above.
+`[service]` is optional under the same rule as `start`/`stop`/`status` above. For migrations, a 502
+or lost response does not prove the command did not run. Inspect the migration ledger and final
+schema before retrying; see [migration recovery](deploy.md#database-migrations).
 
 ## Getting an interactive shell (humans only)
 
@@ -253,11 +298,12 @@ Work the list in order — these cover ~all real failures seen so far:
 1. **Port mismatch** (most common): `--port` ≠ the port the app listens on. Symptom: deploy
    "succeeds", every request refused/000. Fix: redeploy with the app's actual listen port; bind
    `0.0.0.0`.
-2. **Cold start**: a scale-to-zero compute service (`--no-always-on`, or `insta --agent compute always-on
-   off`; new compute is born always-on) suspends when idle — its first request can take seconds.
+2. **Cold start**: a scale-to-zero compute service (the default for new compute; `--always-on` or
+   `insta --agent compute always-on on` opts out) suspends when idle — its first request can take seconds.
    Poll up to ~60s before concluding failure.
 3. **Migration-gated startup**: `CMD migrate && server` with a hung migration = nothing listening,
-   empty logs. Fix the CMD to start the server regardless (see deploy.md).
+   empty logs. Inspect the migration ledger and final schema, then recover the migration without
+   hiding its failure (see [migration recovery](deploy.md#database-migrations)).
 4. **Read the logs**: `insta --agent compute logs [service] --branch <b> --limit 100` — crash loops, missing
    env, bad image arch. A bare read is ONE provider page (~100 lines); when the failure is older
    than that, window it: `--since 2h`, or `--from <unix|ISO>` / `--to`.
