@@ -524,7 +524,7 @@ services:
     port: 8080
     healthcheck: /healthz       # required on a web service; an absolute path that returns 2xx
     volume: true                # optional: mounts a persistent disk at /data
-    mountPath: /app/storage     # optional, needs volume: true; where the disk mounts instead of /data
+    mountPath: /app/storage     # optional, needs volume: true; where the disk mounts instead of /data (cloud only today)
     command: node server.js     # optional: start command, run through sh -c (cloud only today)
     env:
       platform:                 # credentials the platform mints, wired in at deploy time
@@ -572,7 +572,7 @@ together), and `meta` (`name`, `tagline`, `category`, `tags`) which only the reg
 | Use `image:`, never `build:`. The platform does not build from source for template deploys. Push the image yourself first. | Server-side, immediately: `services.<name> uses build: — server-side template deploys support image services only`. |
 | Deployable types are `web`, `worker`, and bare `postgres` / `redis` / `mysql` / `mongodb`. A `worker` is portless and always-on: it must not declare `port`, `healthcheck` or `alwaysOn: false`, nothing is routed to it, and no other service can reference its `url`/`host`. | Locally, before the upload: `services.<name>.port: a worker has no routed port — remove it`. |
 | A `postgres` service must be **bare** (`{ type: postgres }`) and needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
-| `mountPath` and `command` on a service are checked locally from **CLI ≥ 0.1.14**. Older CLIs pass them through unchecked, so a bad value only shows up when the platform refuses the deploy. | At deploy on an old CLI. `insta --agent upgrade` to catch it locally. |
+| `mountPath` and `command` on a service: from **CLI ≥ 0.1.14** the CLI checks their shape locally (`mountPath` needs `volume: true` and an absolute path). The platform also refuses system directories and `..` at deploy. Older CLIs pass both through unchecked. Both are cloud only today. | At deploy on an old CLI, or for a path the platform refuses. `insta --agent upgrade` to catch shape errors locally. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
 reports manifest problems first, so getting past them to the `--set` list (or, for a manifest with
