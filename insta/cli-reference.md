@@ -505,6 +505,7 @@ and health-checks them, instead of a hand-rolled `service add` + `secrets set` +
 - **Outcomes.** `succeeded` prints each service's URL — then run `insta --agent secrets` to refresh `./.env`.
   `partial` is **terminal**: the healthy services stay up and the created resources are kept, so read
   the log tail, then re-run the deploy to retry or `insta --agent service remove <type> <name>` to clean up.
+- **Community templates.** A template whose `source` is `community` was published by an InstaCloud user from their own project, with no review by InstaCloud. Tell your user before you deploy one. It deploys exactly like an official template.
 
 ### Writing `insta.template.yaml`
 
@@ -523,6 +524,8 @@ services:
     port: 8080
     healthcheck: /healthz       # required on a web service; an absolute path that returns 2xx
     volume: true                # optional: mounts a persistent disk at /data
+    mountPath: /app/storage     # optional, needs volume: true; where the disk mounts instead of /data
+    command: node server.js     # optional: start command, run through sh -c (cloud only today)
     env:
       platform:                 # credentials the platform mints, wired in at deploy time
         DATABASE_URL: ${{services.db.DATABASE_URL}}
@@ -569,6 +572,7 @@ together), and `meta` (`name`, `tagline`, `category`, `tags`) which only the reg
 | Use `image:`, never `build:`. The platform does not build from source for template deploys. Push the image yourself first. | Server-side, immediately: `services.<name> uses build: — server-side template deploys support image services only`. |
 | Deployable types are `web`, `worker`, and bare `postgres` / `redis` / `mysql` / `mongodb`. A `worker` is portless and always-on: it must not declare `port`, `healthcheck` or `alwaysOn: false`, nothing is routed to it, and no other service can reference its `url`/`host`. | Locally, before the upload: `services.<name>.port: a worker has no routed port — remove it`. |
 | A `postgres` service must be **bare** (`{ type: postgres }`) and needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
+| `mountPath` and `command` fields on a service need **CLI ≥ 0.1.14**. Older CLIs reject them locally as unknown keys. | Locally on an old CLI: `insta --agent upgrade`. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
 reports manifest problems first, so getting past them to the `--set` list (or, for a manifest with
