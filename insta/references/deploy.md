@@ -64,8 +64,9 @@ Otherwise use a [template](../cli-reference.md#templates) with `type: worker` an
 (no `port` or `healthcheck`); it does not require the CLI's zero-port flag support.
 With that CLI support, pass `--port 0` on each direct deploy; omitting it can select a Dockerfile
 `EXPOSE` or the default web port.
-These portless paths need no listener, and their deploy result has no public URL. Keep the worker always-on
-(the compute creation default): a suspended worker has no inbound request to wake it.
+These portless paths need no listener, and their deploy result has no public URL. The platform keeps a
+port-0 worker always-on by itself (born on when created with `--port 0`, switched on by its first
+`--port 0` deploy, and `always-on off` is refused): a suspended worker has no inbound request to wake it.
 
 Source deployments with `--port 0` also need a platform version whose archive-deploy route accepts
 port zero. `insta --agent build --port` and `compute connect-repo --port` remain TCP-only
@@ -74,7 +75,8 @@ port zero. `insta --agent build --port` and `compute connect-repo --port` remain
 For a source-only app without that CLI or archive-route support, use a Dockerfile whose `CMD`
 runs the worker and a listener on `0.0.0.0:$PORT`, then create/deploy with a matching positive
 `--port` (for example, `8080`). This fallback is a routed service: verify the configured listener
-and a completed worker job, and keep it always-on.
+and a completed worker job, and create it with `--always-on` (new compute is born scale-to-zero, and a
+positive port is not treated as a worker).
 
 ## Secrets at runtime
 
@@ -152,7 +154,7 @@ For web services, the deploy command exiting ≠ the app serving. After every de
 curl -s -o /dev/null -w '%{http_code}' <printed-url>   # poll ~every 3s, up to ~60s
 ```
 
-A scale-to-zero service (`--no-always-on` at create, or `insta --agent compute always-on off`) cold-starts on the first request — allow a slow first hit; new compute services are born always-on (since 2026-09-07) and skip this. `200` (or the
+New compute services are born scale-to-zero, so an idle one cold-starts on the first request — allow a slow first hit; a service created with `--always-on` (or switched on with `insta --agent compute always-on on`) skips this. `200` (or the
 app's expected status) → report deployed **with the URL**. Anything else → triage per
 [operate.md](operate.md); never claim success you didn't observe.
 
@@ -177,7 +179,7 @@ app's expected status) → report deployed **with the URL**. Anything else → t
   server from listening. Move migrations into a separate step under the
   [schema compatibility requirements](#database-migrations), inspecting any partial migration
   state before retrying; do not suppress migration failures.
-- **Cold start ≠ down.** A scale-to-zero compute service (`--no-always-on`, or switched off with `insta --agent compute always-on off`) suspends when idle; the first request wakes it. New compute is born always-on and does not.
+- **Cold start ≠ down.** A scale-to-zero compute service (the default for new compute) suspends when idle; the first request wakes it. One created with `--always-on`, or switched on with `insta --agent compute always-on on`, does not.
 - **Redeploy replaces.** Compute is stateless — anything written to the container filesystem is
   gone on the next deploy. State belongs in the branch's postgres/storage.
 

@@ -57,23 +57,24 @@ stats` on the branch's containers directly if you must, and don't retry the CLI 
 **Billing is always by actual app usage** — vCPU·min burned, GB·min of RAM resident, storage,
 egress — never by machine size × hours. The idle mode only changes what "idle" consumes:
 
-- **Always-on (the birth default for compute since 2026-09-07, all plans)**: machines never
+- **Always-on (opt-in for compute, all plans; automatic for a worker)**: machines never
   suspend, so there are **no cold starts** — but the idle app keeps its RAM resident (plus a
   trickle of vCPU), and that real usage bills continuously (roughly $1–2.50/month for an idle
   minimum-spec app, mostly RAM).
-- **Scale-to-zero (opt-in for compute; the default for postgres)**: idle machines suspend and
+- **Scale-to-zero (the default for new compute and for postgres)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
   start (typically a few seconds) on the first request after idling. On the insta-compute plane
-  (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means 5 minutes
-  with no inbound traffic through the router and no shell session: CPU work and log output never
-  count, and outbound traffic keeps it awake only where a regional setting enables that, so do not
-  rely on it. Background
-  work that serves no requests (a bot polling its platform, a queue consumer, an in-process cron)
-  therefore needs always-on.
+  (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means no
+  inbound traffic through the router, no shell session, and no outbound traffic for the plane's
+  idle window — so an app doing outbound work (model calls, polling its platform) stays up while it
+  works. CPU work and log output never count: background work that is quiet on the network (a
+  CPU-only job, an in-process cron waiting for its next run, a consumer holding a near-silent
+  connection) needs always-on, and once suspended nothing but an inbound request wakes it. A worker
+  (port 0) is always-on automatically.
 
 Flip it any time — it is a latency/cost dial, not a plan feature:
 
-- `insta --agent service add compute <name> --no-always-on` — create scale-to-zero (`--always-on` states the default explicitly).
+- `insta --agent service add compute <name> --always-on` — create always-on (`--no-always-on` states the default explicitly; refused with `--port 0`).
 - `insta --agent compute always-on on|off [service]` — toggle a live service.
 - `insta --agent postgres always-on on|off [service]` — the same dial for a postgres service:
   `off` (default) suspends the idle instance and cold-starts the first connection after idle;
@@ -180,7 +181,7 @@ Rules worth knowing before you call it:
   its port, the machines are rolled back — best-effort — to the config they were serving and the
   command reports the failure. That verdict is the useful part: a restart that "fails" here is
   telling you the app itself is broken, not the platform.
-- **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born always-on since 2026-09-07, so this applies to services switched to scale-to-zero). What happens to a
+- **An idle machine may not be booted or gated at all — and a scale-to-zero service is idle between requests** (new compute is born scale-to-zero, so this applies to every compute service not created or switched always-on). What happens to a
   scaled-to-zero machine depends on the compute plane behind your deployment — `insta --agent agent manifest
   --json` names it on each compute row (`provider`: `insta-compute`, a legacy value, or the neutral `compute`
   when the platform did not report one, in which case assume neither behaviour). On a legacy plane it
@@ -255,8 +256,8 @@ Work the list in order — these cover ~all real failures seen so far:
 1. **Port mismatch** (most common): `--port` ≠ the port the app listens on. Symptom: deploy
    "succeeds", every request refused/000. Fix: redeploy with the app's actual listen port; bind
    `0.0.0.0`.
-2. **Cold start**: a scale-to-zero compute service (`--no-always-on`, or `insta --agent compute always-on
-   off`; new compute is born always-on) suspends when idle — its first request can take seconds.
+2. **Cold start**: a scale-to-zero compute service (the default for new compute; `--always-on` or
+   `insta --agent compute always-on on` opts out) suspends when idle — its first request can take seconds.
    Poll up to ~60s before concluding failure.
 3. **Migration-gated startup**: `CMD migrate && server` with a hung migration = nothing listening,
    empty logs. Inspect the migration ledger and final schema, then recover the migration without
