@@ -376,7 +376,9 @@ a cold start; postgres is unchanged (`insta --agent postgres always-on`, off by 
 **and machine COUNT** (`insta --agent compute scale` — horizontal): a new service is born at its plan's
 ceiling and free plans may move within the free cap but not above it, and stay at one machine —
 beyond either is a 403 — `insta --agent billing subscribe` first; `insta --agent billing usage` /
-`insta --agent billing` show cycle usage and cost. One free org per user. Full flags in
+`insta --agent billing` show cycle usage and cost. One free org per user. To add a teammate to an
+org: `insta --agent org member invite <email> [--role admin]` (admin+; they accept from the emailed
+link), and `insta --agent org member list` / `remove` / `role` manage the rest. Full flags in
 [cli-reference.md](cli-reference.md).
 
 ## When InstaCloud itself gets in your way (feedback)
