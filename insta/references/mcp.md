@@ -98,7 +98,7 @@ server is stateless, there is no "current project" like `./.insta/project.json`.
 | `insta --agent org list` / `create` | `insta_list_orgs` / `insta_create_org` |
 | `insta --agent project list/create/delete` | `insta_list_projects` / `insta_create_project` / `insta_get_project` / `insta_delete_project` |
 | region discovery | `insta_list_regions` |
-| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage) |
+| `insta --agent service add/list/remove/rename` [`--branch`] | `insta_add_service` / `insta_list_services` / `insta_remove_service` / `insta_rename_service` (all take `branch?`; add takes `public?` for storage and `pgVersion?` for postgres) |
 | `insta --agent storage set-access` | `insta_set_service_access` |
 | `insta --agent compute scale` | `insta_scale_service` |
 | `insta --agent compute start\|stop\|suspend\|restart` / `status` | `insta_set_compute_state` / `insta_get_service_status` — `restart` needs a deployed insta-mcp carrying it; older servers reject the verb at schema validation |
