@@ -389,8 +389,8 @@ npx -y insta@latest --agent agent setup                         # production (an
 npx -y insta@latest --agent agent setup --env staging           # staging (any OS; persists the env switch)
 npx -y insta@latest --agent agent setup --project <id>          # + link this directory to a project (CLI >= 0.0.48; the console Connect panel's one-liner)
 npx -y insta@latest --agent agent setup --create [name]         # + create a NEW project (CLI >= 0.0.52; name defaults to this directory)
-curl -fsSL agents.instacloud.com | sh            # production (macOS/Linux, no Node needed)
-curl -fsSL agents.staging.instacloud.com | sh    # staging
+curl -fsSL https://agents.instacloud.com | sh            # production (macOS/Linux, no Node needed)
+curl -fsSL https://agents.staging.instacloud.com | sh    # staging
 ```
 
 Staging via npx is the `--env staging` one-liner above (CLI ≥ 0.0.38) — it persists the env switch
