@@ -523,7 +523,7 @@ and health-checks them, instead of a hand-rolled `service add` + `secrets set` +
 - **Outcomes.** `succeeded` prints each service's URL — then run `insta --agent secrets` to refresh `./.env`.
   `partial` is **terminal**: the healthy services stay up and the created resources are kept, so read
   the log tail, then re-run the deploy to retry or `insta --agent service remove <type> <name>` to clean up.
-- **Community templates.** A template whose `source` is `community` was published by an InstaCloud user from their own project, with no review by InstaCloud. Tell your user before you deploy one. It deploys exactly like an official template.
+- **Community templates.** A template whose `source` is `community` was published by an InstaCloud user from their own project, with no review by InstaCloud. Before deploying a registry code, run `insta --agent template info <code>` and read `source` (`official` or `community`). Tell your user before you deploy a community one. It deploys exactly like an official template.
 
 ### Writing `insta.template.yaml`
 
@@ -548,7 +548,7 @@ services:
       platform:                 # credentials the platform mints, wired in at deploy time
         DATABASE_URL: ${{services.db.DATABASE_URL}}
       fixed:
-        DATA_DIR: /data         # baked in, the deployer never sees or sets it
+        DATA_DIR: /app/storage  # baked in, the deployer never sees or sets it
       required:
         ADMIN_PASSWORD:
           description: Shown at the prompt, so write it for whoever deploys this
