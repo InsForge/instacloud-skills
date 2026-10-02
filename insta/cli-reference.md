@@ -540,7 +540,7 @@ services:
     type: web
     image: ghcr.io/me/my-app:1.4.0   # MUST be publicly pullable, and MUST be pinned
     port: 8080
-    healthcheck: /healthz       # optional on a web service; when set, a deploy waits for that path to answer 2xx, 401 or 403; without it, a deploy counts as healthy once the service is up
+    healthcheck: /healthz       # required on a web service; an absolute path that returns 2xx
     volume: true                # optional: mounts a persistent disk at /data
     mountPath: /app/storage     # optional, needs volume: true; where the disk mounts instead of /data (cloud only today)
     command: node server.js     # optional: start command, run through sh -c (cloud only today)
