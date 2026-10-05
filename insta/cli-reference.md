@@ -524,6 +524,7 @@ and health-checks them, instead of a hand-rolled `service add` + `secrets set` +
 - **Outcomes.** `succeeded` prints each service's URL — then run `insta --agent secrets` to refresh `./.env`.
   `partial` is **terminal**: the healthy services stay up and the created resources are kept, so read
   the log tail, then re-run the deploy to retry or `insta --agent service remove <type> <name>` to clean up.
+- **Community templates.** A template whose `source` is `community` was published by an InstaCloud user from their own project, with no review by InstaCloud. Before deploying a registry code, run `insta --agent template info <code>` and read `source` (`official` or `community`). Tell your user before you deploy a community one. It deploys exactly like an official template.
 
 ### Writing `insta.template.yaml`
 
@@ -542,11 +543,13 @@ services:
     port: 8080
     healthcheck: /healthz       # required on a web service; an absolute path that returns 2xx
     volume: true                # optional: mounts a persistent disk at /data
+    mountPath: /app/storage     # optional, needs volume: true; where the disk mounts instead of /data (cloud only today)
+    command: node server.js     # optional: start command, run through sh -c (cloud only today)
     env:
       platform:                 # credentials the platform mints, wired in at deploy time
         DATABASE_URL: ${{services.db.DATABASE_URL}}
       fixed:
-        DATA_DIR: /data         # baked in, the deployer never sees or sets it
+        DATA_DIR: /app/storage  # baked in, the deployer never sees or sets it
       required:
         ADMIN_PASSWORD:
           description: Shown at the prompt, so write it for whoever deploys this
@@ -580,7 +583,7 @@ Other optional top-level keys: `maintainer`, `sourceRepo`, `upstream` (what you 
 pin), `constraints` (`oneOf` / `allOf` over variable names, for variables that only make sense
 together), and `meta` (`name`, `tagline`, `category`, `tags`) which only the registry renders.
 
-**Four rules that are easy to get wrong, and where you find out:**
+**Five rules that are easy to get wrong, and where you find out:**
 
 | Rule | Where it bites |
 |---|---|
@@ -588,6 +591,7 @@ together), and `meta` (`name`, `tagline`, `category`, `tags`) which only the reg
 | Use `image:`, never `build:`. The platform does not build from source for template deploys. Push the image yourself first. | Server-side, immediately: `services.<name> uses build: — server-side template deploys support image services only`. |
 | Deployable types are `web`, `worker`, and bare `postgres` / `redis` / `mysql` / `mongodb`. A `worker` is portless and always-on: it must not declare `port`, `healthcheck` or `alwaysOn: false`, nothing is routed to it, and no other service can reference its `url`/`host`. | Locally, before the upload: `services.<name>.port: a worker has no routed port — remove it`. |
 | A `postgres` service must be **bare** (`{ type: postgres }`) and needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
+| `mountPath` and `command` on a service: from **CLI ≥ 0.1.17** the CLI checks their shape locally (`mountPath` needs `volume: true` and an absolute path). The platform also refuses system directories and `..` at deploy. Older CLIs pass both through unchecked. Both are cloud only today. | At deploy on an old CLI, or for a path the platform refuses. `insta --agent upgrade` to catch shape errors locally. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
 reports manifest problems first, so getting past them to the `--set` list (or, for a manifest with
