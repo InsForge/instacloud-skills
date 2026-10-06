@@ -569,7 +569,8 @@ storage service mints `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOIN
 `BUCKET_NAME` and `AWS_REGION`. The platform resolves the reference while writing variables, before
 the app starts. A database and a bucket have no address, so `${services.<name>.url}` and `.host`
 are refused for them. A public bucket's address is not a reference either: the app builds it from
-`BUCKET_NAME`, see [Public vs private](references/storage.md#public-vs-private).
+`BUCKET_NAME` plus the platform's public storage host, which no `env.platform` key carries, see
+[Public vs private](references/storage.md#public-vs-private) for where the host comes from.
 
 Do not plan to run `insta --agent secrets bind` afterwards instead: `template deploy` creates the services
 and immediately deploys and health-checks the web one, so an app that needs `DATABASE_URL` would
