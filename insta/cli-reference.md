@@ -539,7 +539,7 @@ services:
     pgVersion: 17               # optional: the Postgres major, an integer the platform offers. Omit it for the default
   files:                        # an object-storage bucket, also bare: no image, port, volume, env or region
     type: storage
-    public: true                # optional: anonymous public-read, anyone can read the files. Omit it for private
+    # public: true              # optional: anonymous public-read, anyone can read the files. Leave it out for private
   web:                          # the key is the service name
     type: web
     image: ghcr.io/me/my-app:1.4.0   # MUST be publicly pullable, and MUST be pinned
@@ -553,6 +553,7 @@ services:
         S3_SECRET: ${{services.files.AWS_SECRET_ACCESS_KEY}}
         S3_ENDPOINT: ${{services.files.AWS_ENDPOINT_URL_S3}}
         S3_BUCKET: ${{services.files.BUCKET_NAME}}
+        S3_REGION: ${{services.files.AWS_REGION}}
       fixed:
         DATA_DIR: /data         # baked in, the deployer never sees or sets it
       required:
@@ -602,7 +603,7 @@ Unknown keys at the top level and under `meta` and `upstream` are not refused. O
 | Use `image:`, never `build:`. The platform does not build from source for template deploys. Push the image yourself first. | Server-side, immediately: `services.<name> uses build: — server-side template deploys support image services only`. |
 | Deployable types are `web`, `worker`, `storage`, and bare `postgres` / `redis` / `mysql` / `mongodb`. A `worker` is portless and always-on: it must not declare `port`, `healthcheck` or `alwaysOn: false`, nothing is routed to it, and no other service can reference its `url`/`host`. | Locally, before the upload: `services.<name>.port: a worker has no routed port — remove it`. |
 | A `postgres` service is **bare** (`{ type: postgres }`) apart from one optional field, `pgVersion`, an integer Postgres major. Omitted, the platform default applies. It needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
-| A `storage` service is a bucket, bare apart from one optional field, `public: true` for anonymous public-read (omit it for private). It takes no `env`, `image`, `port`, `volume` or region, and its credentials are reached through `env.platform`. `public` belongs to `storage` and `pgVersion` to `postgres`, on no other type. A public bucket is readable by anyone, so tell the person you deploy for, and know that deploying one also needs the `service.setAccess` approval. It needs **CLI ≥ @CLI_VERSION@**. | By the platform, after the upload: `invalid template manifest: services.<name>.public: only a storage service can be public`. A CLI older than the floor stops earlier, locally, with `services.<name>.type must be one of web, worker, postgres, redis, mysql, mongodb`. `insta --agent upgrade`. |
+| A `storage` service is a bucket, bare apart from one optional field, `public: true` for anonymous public-read (omit it for private). It takes no `env`, `image`, `port`, `volume` or region, and its credentials are reached through `env.platform`. `public` belongs to `storage` and `pgVersion` to `postgres`, on no other type. A public bucket is readable by anyone, so tell the person you deploy for, and know that deploying one is gated by `service.setAccess`. It needs **CLI ≥ @CLI_VERSION@**. | By the platform, after the upload: on a `web` or `worker`, `invalid template manifest: services.<name>.public: public access is only supported for storage services`, and on a managed database, `invalid template manifest: services.<name>.public: a postgres service is platform-managed and carries no public`, which goes on to say how to declare it bare. A CLI older than the floor stops earlier, locally, with `services.<name>.type must be one of web, worker, postgres, redis, mysql, mongodb`. `insta --agent upgrade`. |
 | A service carries only keys the platform knows. A misspelt key is refused by name, where it used to be ignored. | By the platform, after the upload: `invalid template manifest: services.<name>.<key> is not a template field`. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
