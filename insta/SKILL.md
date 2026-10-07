@@ -219,9 +219,11 @@ and announce it:
    passes it as `--branch <branch>`, since without it they act on the linked branch instead.
 2. Pick the template for the agent the user named: `claude-code`, `codex` or `pi`.
    `insta --agent template info <template>` lists its required and optional variables. Ask the user
-   for a terminal username only. Never take the password, or any other secret such as an API key,
-   through the conversation or into a command you run: the password guards a root shell at a
-   public URL, and whatever you type lands in your transcript. The user sets those in step 5.
+   for a terminal username only, made of letters, digits, `.`, `_` and `-` (up to 32), since it goes
+   into a command as is. Ask again for anything else. Never take the password, or any other secret
+   such as an API key, through the conversation or into a command you run: the password guards a
+   root shell at a public URL, and whatever you type lands in your transcript. The user sets those
+   in step 5.
 3. `insta --agent template deploy <template> --branch <branch> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD="$(openssl rand -hex 24)" -y --json`.
    The password is a throwaway generated inside the command, so its value never appears to you or
    anyone, and the user replaces it in step 5. Use the service name and URL it prints. A second
@@ -231,7 +233,8 @@ and announce it:
    so when you do it.
 5. Hand the user two commands to run in their own terminal, from this project's directory:
    - Their password, typed without echo:
-     `read -rs P && printf '%s' "$P" | insta secrets set ADMIN_PASSWORD --service compute/<service> --branch <branch>; unset P`.
+     `(read -rs P && printf '%s' "$P" | insta secrets set ADMIN_PASSWORD --service compute/<service> --branch <branch>)`.
+     The parentheses keep `P` out of their shell and still report a failure.
      The machine redeploys with it within seconds. An optional secret goes in the same way under
      its own name. A lost password is replaced by running this again.
    - `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with the id from
