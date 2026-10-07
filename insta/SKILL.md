@@ -219,33 +219,34 @@ and announce it:
    passes it as `--branch <branch>`, since without it they act on the linked branch instead.
 2. Pick the template for the agent the user named: `claude-code`, `codex` or `pi`.
    `insta --agent template info <template>` lists its required and optional variables. Ask the user
-   for the terminal username and a strong password of their own rather than making one up. The
-   password guards a root shell at a public URL. Optional ones, such as an API key, are theirs to
-   give or skip.
-3. `insta --agent template deploy <template> --branch <branch> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`.
-   This is the only way to pass the variables, so do not echo the command back with the password
-   in it. Use the service name and URL it prints. A second deploy on the same branch gets its own
-   copy with a suffixed name such as `claude-code-2`.
+   for a terminal username only. Never take the password, or any other secret such as an API key,
+   through the conversation or into a command you run: the password guards a root shell at a
+   public URL, and whatever you type lands in your transcript. The user sets those in step 5.
+3. `insta --agent template deploy <template> --branch <branch> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD="$(openssl rand -hex 24)" -y --json`.
+   The password is a throwaway generated inside the command, so its value never appears to you or
+   anyone, and the user replaces it in step 5. Use the service name and URL it prints. A second
+   deploy on the same branch gets its own copy with a suffixed name such as `claude-code-2`.
 4. `insta --agent compute always-on on <service> --branch <branch>` when the user wants agents to
    keep running with nobody connected, which is usually why they asked. It bills the uptime, so say
    so when you do it.
-5. Hand the user one command to run themselves:
-   `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with the id from
-   `project.projectId` in `insta --agent status --json`. In Claude Code they can type it with a
-   leading `!`. It adds the `<service>.insta` alias to their `~/.ssh/config`, and from then on
-   `ssh <service>.insta` opens a shell on the machine. The alias is one per computer, so when they
-   already have that name from another project, `--setup` refuses. Rename the new service first with
-   `insta --agent service rename compute <service> <new-name> --branch <branch>`, which keeps its URL
-   and `/data`, and hand over the command with the new name. A 400 that names `compute exec` means
-   the service is on the older compute plane, which has no SSH.
+5. Hand the user two commands to run in their own terminal, from this project's directory:
+   - Their password, typed without echo:
+     `read -rs P && printf '%s' "$P" | insta secrets set ADMIN_PASSWORD --service compute/<service> --branch <branch>; unset P`.
+     The machine redeploys with it within seconds. An optional secret goes in the same way under
+     its own name. A lost password is replaced by running this again.
+   - `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with the id from
+     `project.projectId` in `insta --agent status --json`. It adds the `<service>.insta` alias to
+     their `~/.ssh/config`, and from then on `ssh <service>.insta` opens a shell on the machine. In
+     Claude Code this one can also be typed with a leading `!`. The alias is one per computer, so
+     when they already have that name from another project, `--setup` refuses. Rename the new
+     service first with `insta --agent service rename compute <service> <new-name> --branch <branch>`,
+     which keeps its URL and `/data`, and hand over the command with the new name. A 400 that names
+     `compute exec` means the service is on the older compute plane, which has no SSH.
 
-Report the URL (the browser terminal, signed in with the username and password they chose, which
-you do not repeat), the `ssh <service>.insta` alias, and that inside the machine they start the
-agent with `claude`, `codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose
-browser callback cannot reach the machine). Tell them the terminal credentials are kept as the
-service's own variables, so a lost password comes back with
-`insta secrets --service compute/<service> --branch <branch> --print`, run from this project's
-directory. This is the supported way to give someone a shell to keep working in: the
+Report the URL (the browser terminal, signed in with that username and the password they set), the
+`ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
+`codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose browser callback
+cannot reach the machine). This is the supported way to give someone a shell to keep working in: the
 interactive-shell row under *When InstaCloud is not the answer* is about deploying an app that
 needs one.
 
