@@ -721,7 +721,7 @@ data loss. "If verification fails, just point back at the source" is wrong once 
 | psql session | `heroku pg:psql` | `render psql <id> --command "…" -o json --confirm` (only non-interactive form) | `insta --agent postgres connect` |
 | one-off task | `heroku run <cmd>` | `render jobs create` | `insta --agent compute exec [service] -- <cmd>` (argv, no shell) |
 | stop traffic | `heroku maintenance:on` | no switch — scale to zero or suspend, per service | `insta --agent compute stop [service]` |
-| scale | `heroku ps:scale web=2` | dashboard only — no CLI command | `insta --agent compute scale 2 <name>` |
+| scale | `heroku ps:scale web=2` | dashboard only — no CLI command | `insta --agent compute scale 2 <name>`, plus `insta --agent compute always-on on <name>` to hold 2 (otherwise 1 to 2 on demand) |
 | custom domain | `heroku domains:add` | dashboard only — no CLI command | `insta --agent domain attach <host> --group <svc>` |
 | logs | `heroku logs -t` | `render logs` | `insta --agent compute logs` |
 
