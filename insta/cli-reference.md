@@ -662,11 +662,14 @@ to ask before the last step. It needs **CLI ≥ 0.1.21**.
    already deployed keep running. Publish only after their yes to that summary, with
    `insta --agent template publish <code> --yes`. You have no terminal, so `--yes` is how the person's
    yes reaches the command, and it is never passed before they gave it. The person may edit the draft
-   in the console between your summary and their yes, so publish what they agreed to. On MCP, pass the
-   `updatedAt` of the version you summarized as `expectedUpdatedAt` of `insta_publish_template`. The CLI
-   has no such flag, so run `insta --agent template draft <code> --json` right before `publish --yes`
-   and stop if its `updatedAt` differs from the version you summarized. An edit made after the summary
-   needs a new summary and a new yes.
+   in the console between your summary and their yes. On MCP, pass the `updatedAt` of the version you
+   summarized as `expectedUpdatedAt` of `insta_publish_template`: a draft edited since answers
+   `conflict` and nothing is published. The CLI has no such flag. `publish` reads the draft again itself
+   and publishes it as it is at that moment. So run `insta --agent template draft <code> --json` right
+   before `publish --yes` and stop if its `updatedAt` differs from the version you summarized, since an
+   edit made after the summary needs a new summary and a new yes. An edit that lands between that read
+   and the publish is still published. When the person or a teammate may be editing the draft in the
+   console while you publish, use MCP, or tell the person the CLI cannot rule that out.
 
 What to make a variable that needs a decision (step 2):
 
