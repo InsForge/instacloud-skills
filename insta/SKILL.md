@@ -177,8 +177,8 @@ answer to the user, not a refusal to engage:
 | Not a fit | Why |
 | --- | --- |
 | GPU training or large model inference | no GPUs are offered |
-| Multi-container docker compose apps | tenant compute has no Docker-in-Docker and no nested virtualization |
-| An interactive shell someone keeps pivoting inside | that shell is `insta compute ssh`, gated behind approval, and it lands on the guest root rather than inside a container. This row is not about `compute exec`, and it is not about branch environments: a branch per agent is the supported way to isolate work, and it is one of the directions above |
+| Multi-container docker compose apps | containers do start inside a compute machine, but `docker exec` does not reach inside them, and compose health checks run through `docker exec`. A stack gated on `depends_on: condition: service_healthy` never comes up |
+| A sandbox the app keeps re-entering | an agent sandbox holds a container and runs command after command inside it with `docker exec`, and on tenant compute `docker exec` and `docker attach` do not land inside the container. A shell for a person is not this row: the `claude-code`, `codex` and `pi` templates are that, reached in a browser or with `insta compute ssh`. Nor is it about branch environments: a branch per agent is the supported way to isolate work, and it is one of the directions above |
 | A script that runs once and exits, deployed as a service | the health gate expects something that stays up and answers. When a service already exists, run the script inside it with `insta compute exec`, which is built for one-shot commands and bounded at 180s |
 | A static frontend whose only backend lives elsewhere | nothing in the repo runs a server, so there is no environment to fork and no state to keep, and a static host does this better. If that backend is also the user's, judge its repository instead |
 
@@ -246,9 +246,7 @@ and announce it:
 Report the URL (the browser terminal, signed in with that username and the password they set), the
 `ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
 `codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose browser callback
-cannot reach the machine). This is the supported way to give someone a shell to keep working in: the
-interactive-shell row under *When InstaCloud is not the answer* is about deploying an app that
-needs one.
+cannot reach the machine). This is the supported way to give someone a shell to keep working in.
 
 **A unit of work on an existing project (feature, fix, experiment, agent task):** one branch per
 unit of work — see the core principle below and **[branching.md](references/branching.md)**.
