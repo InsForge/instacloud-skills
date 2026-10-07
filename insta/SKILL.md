@@ -213,21 +213,22 @@ terminal with that agent's CLI installed, and `HOME` on a persistent `/data` vol
 and announce it:
 
 1. `insta --agent status`, then log in and `insta --agent project create <name>` as above if unlinked.
-2. `insta --agent template info claude-code` (or `codex`, `pi`) lists the required and optional
-   variables. Ask the user for the terminal username and password. Template variables are
-   write-only once deployed, so the user keeps them. Optional ones, such as an API key, are theirs
-   to give or skip.
-3. `insta --agent template deploy claude-code --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`.
+   An already linked project needs the session from *Agent execution mode* first.
+2. Pick the template for the agent the user named: `claude-code`, `codex` or `pi`.
+   `insta --agent template info <template>` lists its required and optional variables. Ask the user
+   for the terminal username and password. Template variables are write-only once deployed, so the
+   user keeps them. Optional ones, such as an API key, are theirs to give or skip.
+3. `insta --agent template deploy <template> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`.
    Use the service name and URL it prints. A second deploy on the same branch gets its own copy
    with a suffixed name such as `claude-code-2`.
 4. `insta --agent compute always-on on <service>` when the user wants agents to keep running with
    nobody connected, which is usually why they asked. It bills the uptime, so say so when you do it.
 5. Hand the user one command to run themselves:
-   `insta compute ssh <service> --setup --project <project-id>`, with the id from
-   `project.projectId` in `insta --agent status --json`. In Claude Code they can type it with a
-   leading `!`. It adds the
-   `<service>.insta` alias to their `~/.ssh/config`, and from then on `ssh <service>.insta` opens a
-   shell on the machine.
+   `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with both values
+   from `project.projectId` and `project.branch` in `insta --agent status --json` (with `--project`
+   alone it targets `main`, not the branch you deployed to). In Claude Code they can type it with a
+   leading `!`. It adds the `<service>.insta` alias to their `~/.ssh/config`, and from then on
+   `ssh <service>.insta` opens a shell on the machine.
 
 Report the URL (the browser terminal, signed in with that username and password), the
 `ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
