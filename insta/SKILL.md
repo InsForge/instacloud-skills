@@ -216,26 +216,32 @@ and announce it:
    An already linked project needs the session from *Agent execution mode* first.
 2. Pick the template for the agent the user named: `claude-code`, `codex` or `pi`.
    `insta --agent template info <template>` lists its required and optional variables. Ask the user
-   for the terminal username and password. Template variables are write-only once deployed, so the
-   user keeps them. Optional ones, such as an API key, are theirs to give or skip.
-3. `insta --agent template deploy <template> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`.
-   Use the service name and URL it prints. A second deploy on the same branch gets its own copy
-   with a suffixed name such as `claude-code-2`.
+   for the terminal username and a strong password of their own rather than making one up. The
+   password guards a root shell at a public URL. Both are stored as the service's own variables,
+   readable later with `insta --agent secrets --service compute/<service> --print`. Optional ones,
+   such as an API key, are theirs to give or skip.
+3. `insta --agent template deploy <template> --branch <branch> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`,
+   on a long-lived branch, usually `main`. A per-task branch takes the machine and its `/data` with
+   it when the branch is deleted. Use the service name and URL it prints. A second deploy on the
+   same branch gets its own copy with a suffixed name such as `claude-code-2`.
 4. `insta --agent compute always-on on <service>` when the user wants agents to keep running with
    nobody connected, which is usually why they asked. It bills the uptime, so say so when you do it.
 5. Hand the user one command to run themselves:
-   `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with both values
-   from `project.projectId` and `project.branch` in `insta --agent status --json` (with `--project`
-   alone it targets `main`, not the branch you deployed to). In Claude Code they can type it with a
-   leading `!`. It adds the `<service>.insta` alias to their `~/.ssh/config`, and from then on
-   `ssh <service>.insta` opens a shell on the machine.
+   `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with the id from
+   `project.projectId` in `insta --agent status --json` and the branch you deployed to (with
+   `--project` alone it targets `main`). In Claude Code they can type it with a leading `!`. It adds
+   the `<service>.insta` alias to their `~/.ssh/config`, and from then on `ssh <service>.insta` opens
+   a shell on the machine. The alias is one per computer, so when they already have that name from
+   another project, `--setup` refuses. Rename the new service first with
+   `insta --agent service rename compute <service> <new-name>`, which keeps its URL and `/data`, and
+   hand over the command with the new name.
 
-Report the URL (the browser terminal, signed in with that username and password), the
-`ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
-`codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose browser callback
-cannot reach the machine). This is the supported way to give someone a shell to keep working in:
-the interactive-shell row under *When InstaCloud is not the answer* is about deploying an app that
-needs one.
+Report the URL (the browser terminal, signed in with the username and password they chose, which
+you do not repeat), the `ssh <service>.insta` alias, and that inside the machine they start the
+agent with `claude`, `codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose
+browser callback cannot reach the machine). This is the supported way to give someone a shell to
+keep working in: the interactive-shell row under *When InstaCloud is not the answer* is about
+deploying an app that needs one.
 
 **A unit of work on an existing project (feature, fix, experiment, agent task):** one branch per
 unit of work — see the core principle below and **[branching.md](references/branching.md)**.
