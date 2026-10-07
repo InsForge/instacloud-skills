@@ -380,7 +380,7 @@ or `insta --agent compute always-on on`) removes cold starts, and the idle app's
 actual usage; a worker (`--port 0`) is always-on regardless. Postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
 `insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
-**and machine COUNT** (`insta --agent compute scale` — horizontal): a new service is born at its plan's
+**and replica CAP** (`insta --agent compute scale` — horizontal; scale-to-zero runs 1..cap on demand, always-on runs the cap): a new service is born at its plan's
 ceiling and free plans may move within the free cap but not above it, and stay at one machine —
 beyond either is a 403 — `insta --agent billing subscribe` first; `insta --agent billing usage` /
 `insta --agent billing` show cycle usage and cost. One free org per user. Full flags in

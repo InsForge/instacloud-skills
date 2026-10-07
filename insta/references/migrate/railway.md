@@ -38,7 +38,7 @@ file, so "cd somewhere safe" is not isolation.
 | `RAILWAY_*` built-ins, `PORT` | skip: render-time only, and the platform supplies `PORT` here |
 | any other variable | `insta --agent secrets set KEY` |
 | a volume | `--volume <gi>` on `insta --agent service add`, or `insta --agent compute volume X --size <gi>`; it mounts at `/data` unless you pass `--mount-path <path>`, so pass the Railway volume's own mount path and the app needs no path change. It mounts when the machine is next created, so a `restart` is enough (see the `disk:` row in `migrate/render.md`), and download the source contents while its service still runs |
-| `numReplicas` | `insta --agent compute scale <n> X` (1 to 10, same region, paid plans) |
+| `numReplicas` | `insta --agent compute scale <n> X` (1 to 10, same region, paid plans), plus `insta --agent compute always-on on X` to hold exactly n; without it the service runs 1 up to n on demand |
 | a cron service | `insta --agent cron create <name> '<expr>' --service <compute> --path </your/endpoint>`. The source's cron runs a **command**; this calls an **HTTP endpoint**, so the work moves into a route on a compute service you already have and the schedule calls it. No always-on needed — a scale-to-zero service is woken for the run. Expressions are **UTC**; check the source's timezone before copying one across. Make the handler idempotent on the `insta-cron-run-id` header: delivery is at-least-once |
 | multi-region replicas | not available. One region per service, chosen with `--region` at add time, or one region per template deployment with `insta --agent template deploy --region` |
 
