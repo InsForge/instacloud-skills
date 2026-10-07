@@ -12,7 +12,8 @@ description: >
   `insta` CLI), when the user mentions InstaCloud or insta, AND when they ask to
   deploy an app, need a database/backend/object storage, want a scheduled or
   recurring task, want preview or
-  per-agent sandbox environments, want branchable infrastructure, want to
+  per-agent sandbox environments, want a cloud machine for a coding agent such
+  as Claude Code or Codex, want branchable infrastructure, want to
   migrate an existing app in from Heroku / Railway / Fly / Render, or mention
   agent setup or MCP — even if they don't say "InstaCloud" explicitly. Also
   covers the insta-cloud remote MCP server (insta_* tools) and the self-hosted
@@ -204,6 +205,36 @@ always-on. Portless deployments have no public URL; verify status/logs plus a co
 
 **"Set up / onboard / sign up":** cloud → `insta --agent login` (browser sign-in; relay the printed link
 if no browser opens) or `--email/--password`; then `insta --agent project create`. Local/oss → nothing to set up beyond the daemon.
+
+**"A cloud machine for my coding agent" ("a cloud box for Claude Code", "run Codex in the cloud",
+"keep my agent working while my laptop is closed"):** deploy the agent's workspace template rather
+than building a compute service by hand. `claude-code`, `codex` and `pi` each give a browser
+terminal with that agent's CLI installed, and `HOME` on a persistent `/data` volume. Run the chain
+and announce it:
+
+1. `insta --agent status`, then log in and `insta --agent project create <name>` as above if unlinked.
+2. `insta --agent template info claude-code` (or `codex`, `pi`) lists the required and optional
+   variables. Ask the user for the terminal username and password. Template variables are
+   write-only once deployed, so the user keeps them. Optional ones, such as an API key, are theirs
+   to give or skip.
+3. `insta --agent template deploy claude-code --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD=<p> -y --json`.
+   Use the service name and URL it prints. A second deploy on the same branch gets its own copy
+   with a suffixed name such as `claude-code-2`.
+4. `insta --agent compute always-on on <service>` when the user wants agents to keep running with
+   nobody connected, which is usually why they asked. It bills the uptime, so say so when you do it.
+5. Hand the user one command to run themselves:
+   `insta compute ssh <service> --setup --project <project-id>`, with the id from
+   `project.projectId` in `insta --agent status --json`. In Claude Code they can type it with a
+   leading `!`. It adds the
+   `<service>.insta` alias to their `~/.ssh/config`, and from then on `ssh <service>.insta` opens a
+   shell on the machine.
+
+Report the URL (the browser terminal, signed in with that username and password), the
+`ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
+`codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose browser callback
+cannot reach the machine). This is the supported way to give someone a shell to keep working in:
+the interactive-shell row under *When InstaCloud is not the answer* is about deploying an app that
+needs one.
 
 **A unit of work on an existing project (feature, fix, experiment, agent task):** one branch per
 unit of work — see the core principle below and **[branching.md](references/branching.md)**.
