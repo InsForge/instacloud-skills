@@ -628,17 +628,26 @@ review, and anyone can then deploy it. The job is to leave nothing in it that sh
 to ask before the last step. It needs **CLI ≥ @@CLI_FLOOR@@**.
 
 1. **Create the draft.** From the project the person named: `insta --agent template create` (the
-   linked project, or `--project <id>`). It prints the draft's `code`, which every later command
-   takes, and a link to the console editor, so hand the link to the person. On an API host with no
-   `api.` prefix there is no link and the code is printed alone. With no project to start from,
-   `insta --agent template create --blank --name "<name>"` makes an empty draft, which only a platform
-   that serves blank drafts accepts. Any other platform says so and creates nothing, so ask the person
-   for a project instead. A blank draft starts with no service, and a draft with no service cannot be
-   published. Today the `edit` file below changes a service the draft already has and does not add one,
-   so ask the person to add the first service in the console editor.
+   linked project, or `--project <id>`). `--name "<name>"` also works here, and without it the draft is
+   named after the project. It prints the draft's `code`, which every later command takes, and a link
+   to the console editor, so hand the link to the person. Every later command takes its org from the
+   linked project, so when the project is not the linked one (another directory, or a project of
+   another org), create it with `--json` and pass `--org <orgId>`, the `orgId` under `template`, to each
+   later command. Without it they fail or answer 404 against the wrong org. On an API host with no `api.`
+   prefix there is no link and the code is printed alone. With no project to start from,
+   `insta --agent template create --blank --org <id> --name "<name>"` makes an empty draft, with the
+   id from `insta --agent org list --json` (a linked project supplies it when `--org` is left out). It
+   is accepted only by a platform that serves blank drafts. Any other platform says so and creates
+   nothing, so ask the person for a project instead. A blank draft starts with no service, and a draft
+   with no service cannot be published. Today the `edit` file below changes a service the draft already
+   has and does not add one, so ask the person to add the first service in the console editor.
 2. **Read it.** `insta --agent template draft <code> --json`. It prints `{template, editorUrl}`, and the
    draft's `publishRequirements`, `updatedAt`, `referenceOptions` and `report` sit under `template`.
-   Settle every variable of every service from the `kind` it shows, using the table below.
+   Go through every variable of every service by the `kind` it shows. Only a row that needs a decision
+   needs an edit: a `required` one, using the table below, or any row whose value is wrong to publish.
+   The rows the generator settled, `generated`, `reference` and `fixed`, can stay. A `fixed` value is
+   one the generator copied as typed: an address of another service of the project, the port a web
+   service listens on, or a value the project took from a template as fixed.
 3. **Fill in the listing.** A `tagline`, a `category` and a `readme` that says what the template runs
    and what to enter. The category is one of the platform's fixed list, and a value outside it is
    refused with the list in the refusal. Send steps 2 and 3 together with
@@ -646,18 +655,20 @@ to ask before the last step. It needs **CLI ≥ @@CLI_FLOOR@@**.
 4. **Check the requirements.** Read the draft again. Every entry of `publishRequirements` must show
    `ok: true`, and one that does not lists its `items`. The next table says how to meet each.
 5. **Ask, then publish.** Tell the person what will happen: the template becomes public in the
-   community gallery at once, with no review, and anyone can deploy it. Name what goes in it (its
-   services, the variable names and descriptions, the README) and anything that stands out, such as
-   a public bucket. Say that `insta --agent template unpublish <code>` takes it out again and that
-   copies already deployed keep running. Publish only after their yes in this conversation, with
+   community gallery at once, with no review, and anyone can deploy it. Name what goes in it: its name
+   and code, its services, the variable names and descriptions, the values published as typed (the
+   defaults and the fixed values) and the README, and anything that stands out, such as a public
+   bucket. Say that `insta --agent template unpublish <code>` takes it out again and that copies
+   already deployed keep running. Publish only after their yes to that summary, with
    `insta --agent template publish <code> --yes`. You have no terminal, so `--yes` is how the person's
    yes reaches the command, and it is never passed before they gave it. The person may edit the draft
    in the console between your summary and their yes, so publish what they agreed to. On MCP, pass the
-   `updatedAt` you showed as `expectedUpdatedAt` of `insta_publish_template`. The CLI has no such flag,
-   so run `insta --agent template draft <code> --json` right before `publish --yes` and stop if its
-   `updatedAt` differs from the one you showed, then show the person the change.
+   `updatedAt` of the version you summarized as `expectedUpdatedAt` of `insta_publish_template`. The CLI
+   has no such flag, so run `insta --agent template draft <code> --json` right before `publish --yes`
+   and stop if its `updatedAt` differs from the version you summarized. An edit made after the summary
+   needs a new summary and a new yes.
 
-What to make each variable (step 2):
+What to make a variable that needs a decision (step 2):
 
 | The variable is | Make it | Its `choice` in the PATCH body |
 |---|---|---|
