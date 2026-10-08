@@ -547,7 +547,7 @@ services:
     type: web
     image: ghcr.io/me/my-app:1.4.0   # MUST be publicly pullable, and MUST be pinned
     port: 8080
-    healthcheck: /healthz       # required on a web service; an absolute path that returns 2xx
+    healthcheck: /healthz       # optional: no path counts as up once it runs, a path is polled
     volume: true                # optional: mounts a persistent disk at /data
     env:
       platform:                 # credentials the platform mints, wired in at deploy time
@@ -566,6 +566,10 @@ services:
         SMTP_HOST: One-line description, the shorthand for a var with no other keys
 ```
 
+A web service's `healthcheck` is optional. Without a path it counts as up once it runs, and with one the
+platform polls it on the service's own origin, where 2xx, 401 and 403 pass while a redirect, a 404 or a
+5xx does not.
+
 **`env.platform` is how a managed service reaches the app, and a template with a database or a
 bucket needs it.** The value is a reference, `${{services.<service>.<KEY>}}`, naming another service
 in this same manifest and the credential key it mints. A postgres service mints `DATABASE_URL`. A
@@ -577,9 +581,9 @@ are refused for them. A public bucket's address is not a reference either: the a
 [Public vs private](references/storage.md#public-vs-private) for where the host comes from.
 
 Do not plan to run `insta --agent secrets bind` afterwards instead: `template deploy` creates the services
-and immediately deploys and health-checks the web one, so an app that needs `DATABASE_URL` would
-start without it and fail the gate. Binding after the fact then needs a redeploy, which defeats
-the point of shipping the service set as one unit.
+and immediately deploys the web one and waits for it to come up, and for its health check path when it
+has one, so an app that needs `DATABASE_URL` would start without it and fail. Binding after the fact
+then needs a redeploy, which defeats the point of shipping the service set as one unit.
 
 Generated secrets are declared once and referenced, so the value never leaves the platform:
 
@@ -647,7 +651,10 @@ to ask before the last step. It needs **CLI ≥ 0.1.21**.
    needs an edit: a `required` one, using the table below, or any row whose value is wrong to publish.
    The rows the generator settled, `generated`, `reference` and `fixed`, can stay. A `fixed` value is
    one the generator copied as typed: an address of another service of the project, the port a web
-   service listens on, or a value the project took from a template as fixed.
+   service listens on, or a value the project took from a template as fixed. A web service's generated
+   health check comes from the template the project was deployed from when there was one, otherwise
+   from a path the generator found answering on the running project (none for a stopped service). The
+   author can change it, or clear it with `"healthcheck": null` in that service's `settings` in an edit.
 3. **Fill in the listing.** A `tagline`, a `category` and a `readme` that says what the template runs
    and what to enter. The category is one of the platform's fixed list, and a value outside it is
    refused with the list in the refusal. Send steps 2 and 3 together with
