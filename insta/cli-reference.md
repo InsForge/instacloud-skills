@@ -84,7 +84,7 @@ keys and raw request data must not be included in source control or approval rep
 | `insta --agent deploy <dir>` / `--image <url>` [`--branch <b>`] [`--group <g>`] [`--port <n>`] [`--websocket`] [`--replace-source`] [`--json`] | deploy to a compute service — a **source dir** (**whether it needs a `Dockerfile` depends on where the service runs**: on an insta-compute service one is *optional* — the CLI packs the directory, uploads it, and the build gateway builds it with nixpacks when there is no Dockerfile; on a legacy-plane service one is still *required*, and without it the command exits 1 naming the options: write a Dockerfile, `--image <url>`, or connect the repo to the service (`insta --agent compute connect-repo <owner/repo> [service]`). The CLI asks the platform which lane serves the target rather than guessing. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta --agent upgrade` and retry. Either way the build is remote — no local Docker; against a local insta-oss daemon the CLI builds with your local docker instead, same command) or a **prebuilt image**. Defaults to the branch's sole compute service; `--group` picks by name (gated: `deploy`). If the installed `deploy --help` advertises worker port zero, `--port 0` deploys a portless worker on insta-compute with no public URL; otherwise use a [template worker](#templates) or the [source-only listener fallback](references/deploy.md#workers-without-a-routed-port). See [worker ports](references/deploy.md#workers-without-a-routed-port) for CLI/platform prerequisites. `--websocket` runs it as a WebSocket app (larger guest + connection-based concurrency); the setting is recorded on the service, so a later `compute restart` or flagless redeploy keeps it (see [operate.md](references/operate.md)). A service connected to a GitHub repo refuses a dir/image deploy (409) unless `--replace-source` is passed (admin): the image then replaces the repo connection. `--json` prints one `{image, machineId, url, branch, group, nextActions}` document on stdout — build progress moves to stderr so stdout stays parseable |
 | `insta --agent template list` [`--json`] · `insta --agent template info <code>` [`--json`] | browse the platform **template registry**: one row per template (code / version / category / required-var count / deploy count / name — tagline), and the detail view — version, maintainer, source, upstream pin, a services summary (types, ports, volumes, a Postgres service's major as `postgres 17`, and `public` or `private` for a storage bucket, **CLI ≥ 0.1.19**), and every required/optional variable with its description, generator or default |
 | `insta --agent template deploy <code\|./dir\|github-url>` [`--branch <b>`] [`--region <r>`] [`--set <NAME=value>`] [`-y`, `--yes`] [`--json`] | deploy a template's whole service set onto a branch (default: current) — a **registry code**, a **local directory** carrying `insta.template.yaml`, or a **github.com URL** (⚠️ **preview**, needs a recent CLI and `git` on `PATH` — see [Templates](#templates); `https://github.com/<owner>/<repo>`, `/tree/<ref>`, `/tree/<ref>/<dir>`, or a `/blob/…/insta.template.yaml` file link). A bare word is **always** a registry code; local mode needs a path-looking target (`./dir`, `/abs/dir`, `~/dir`, `sub/dir`), so a same-named directory in the working dir can never shadow a registry template. The GitHub form shallow-clones on **your machine** with **your** git credentials — private repositories work when git can already read them (`gh auth login` then `gh auth setup-git`) — reads the manifest from the named directory (never scanning the tree, never following a symlink out of the clone), deletes the clone, and sends the manifest inline. Missing required variables are prompted for on a terminal; `--yes` or no TTY fails with the exact `--set NAME=value` list instead. `secret:N`-generated and defaulted variables are resolved **by the platform** — generated secrets never transit. Renders the 4-step pipeline (create services → write variables → deploy → health check), then the per-service URLs; `--json` replaces all of that with one document, which in GitHub mode carries a leading `source: {repo, ref, path, commit}` where `commit` is the commit that was checked out. May come back `approval_required` (hint on stderr, envelope on stdout with `--json`, **exit 2** — as every gated command). `--region <r>` places **every** service the template creates in that region (a slug from `insta --agent config regions`, default `us-east`), except a storage bucket, which has no region. One region per template deployment, not per service, and it cannot be changed afterwards. A retry (same deployment) may omit it or repeat it, a different value is refused with 409. See [Templates](#templates) |
-| `insta --agent template create` [`--project <id>`] [`--blank`] [`--name <name>`] · `template drafts` · `template draft <code>` · `template edit <code> --patch <file\|->` · `template regenerate <code>` · `template publish <code>` [`--yes`] · `template unpublish <code>` · `template delete <code>` [`--yes`] (each takes `--json`, and every one but `create` from a project takes `--org <id>`) | author a **community template** in your org and publish it to the community gallery. The draft is the one the console's template editor shows, so the person can open it and edit by hand while you work. `create` generates a draft from the linked project (`--project <id>` names another) and prints its code, its status and a link to the console editor. `create --blank` makes an empty draft instead and takes `--name`, and a platform that does not serve blank drafts yet says so and creates nothing. `drafts` lists the org's templates with their status. `draft <code>` prints one: its services, every variable with the choice made for it, `publishRequirements` and `updatedAt`, and `--json` prints the whole draft, with `referenceOptions` and `report` as well. `edit <code> --patch <file>` sends the file (`-` reads stdin) as the editor's own PATCH body, and uses the draft's current `updatedAt` when the file carries no `expectedUpdatedAt`. `regenerate <code>` rebuilds the draft from its source project and keeps what you edited, which is how a blocked item clears once you fixed it in the project, and it refuses a draft that has no source project (a blank draft, or one whose project was deleted). `publish <code>` lists the template in the community gallery **at once, with no review**: on a terminal it says so and asks first, and anywhere else it needs `--yes` and otherwise exits non-zero having published nothing. `unpublish <code>` takes it out again and deployed copies keep running. `delete <code>` removes a draft that was never published and confirms like `publish`. The org is the linked project's, or `--org <id>`. **No approval**: `create` from a project reads its secrets, a read every agent policy mode allows, and the platform decides the other commands by org membership alone, so no policy refusal and no approval applies, and the person's yes before `publish` is the only consent check. Needs **CLI ≥ 0.1.21**. See [Publishing a community template](#publishing-a-community-template) |
+| `insta --agent template create` [`--project <id>`] [`--blank`] [`--name <name>`] · `template drafts` · `template draft <code>` · `template edit <code> --patch <file\|->` · `template regenerate <code>` · `template publish <code>` [`--yes`] · `template unpublish <code>` · `template delete <code>` [`--yes`] (each takes `--json`, and every one but `create` from a project takes `--org <id>`) | author a **community template** in your org and publish it to the community gallery. The draft is the one the console's template editor shows, so the person can open it and edit by hand while you work. `create` generates a draft from the linked project (`--project <id>` names another) and prints its code, its status and a link to the console editor. `create --blank` makes an empty draft instead and takes `--name`, and a platform that does not serve blank drafts yet says so and creates nothing. `drafts` lists the org's templates with their status. `draft <code>` prints one: its services, every variable with the choice made for it, `publishRequirements` and `updatedAt`, and `--json` prints the whole draft, with `referenceOptions` and `report` as well. `edit <code> --patch <file>` sends the file (`-` reads stdin) as the editor's own PATCH body, which also adds and deletes services and variables, so a blank draft gets its services from you, and uses the draft's current `updatedAt` when the file carries no `expectedUpdatedAt`. `regenerate <code>` rebuilds the draft from its source project and keeps what you edited, which is how a blocked item clears once you fixed it in the project, and it refuses a draft that has no source project (a blank draft, or one whose project was deleted). `publish <code>` lists the template in the community gallery **at once, with no review**: on a terminal it says so and asks first, and anywhere else it needs `--yes` and otherwise exits non-zero having published nothing. `unpublish <code>` takes it out again and deployed copies keep running. `delete <code>` removes a draft that was never published and confirms like `publish`. The org is the linked project's, or `--org <id>`. **No approval**: `create` from a project reads its secrets, a read every agent policy mode allows, and the platform decides the other commands by org membership alone, so no policy refusal and no approval applies, and the person's yes before `publish` is the only consent check. Needs **CLI ≥ 0.1.21**. See [Publishing a community template](#publishing-a-community-template) |
 | `insta --agent domain search <keyword>` [`--tlds com,dev`] [`--org <id>`] [`--json`] | **buy a domain THROUGH InstaCloud** (a developer-owned/BYO domain skips `search`/`buy` entirely — go straight to `domain attach` below): purchasable names with the price you pay and the yearly renewal. A label (`myapp`) comes back across the extensions the registrar suggests, or the ones `--tlds` names (at most 50); a full name (`myapp.com`) is always in the answer unless `--tlds` leaves its extension out, even when it cannot be bought, so a plain name you typed is never answered with silence — but only a plain one: a pasted `www.myapp.com`, or a trailing dot, is answered for the label alone and the string you typed is absent. An extension is sold unless registering it needs something InstaCloud does not collect (registrant or residency fields, a registry notice or acknowledgement — `.ca`, `.fr`, …). Such a name is `unavailable` wherever you asked for it, and a suggestion in one is dropped. **`premium: true` is a registry premium name**, buyable when `purchasable` at its own price — say so when you relay the price. It is in `--json` only: the table prints a premium row as a plain price with no `(renews …)`. Its row carries no `renewalPriceCents`; the `buy` order may. **Read `reason`** — one with no price and a registrar refusal each say so in their own words. `unavailable` is the fallback, and the one to be careful with: it does **not** distinguish "the registrar says it is taken" from "a name we cannot sell", so do not report either as the reason when that is all you have |
 | `insta --agent domain buy <name>` [`--years n`] [`--no-open`] [`--json`] | **(CLI ≥ 0.0.80 — older builds call routes the platform has removed)** order it. **A domain belongs to the ORG** — the one your linked project is in. `list`, `status`, `search` and `records` take `--org <id>` to name another; `buy` and `attach` do not, because both bind the linked project: buying spends that org's money under that project's policy, and attaching names one of its services. Your agent policy is read at the project your session is bound to (`insta agent setup`), and that project must be in the org paying. A credential that names no project — an `insta_` key, MCP — is judged on the whole org instead: every project in it must be `full_access`. **Buying binds nothing**: the registered name serves nothing until `domain attach` says what it should serve. Answers a **Stripe Checkout URL a human must open** — nothing is registered until they pay, and registrations are **non-refundable**, so relay the URL and stop. Gated: `domain.purchase` — **`full_access`, which a new project starts on, allows it outright**; `branch_specific` answers `approval_required` (202 + exit 2, see [Approval relay](SKILL.md#approval-relay-critical--gated-actions)); `read_only` refuses. Paying the Checkout link needs a human either way. Some registries take fixed terms (`.ai` is 2-year only) — a term they refuse is a 400 **before** any payment. **Pass `--no-open`**: by default this spawns the host's browser at the Checkout link, which on an agent's machine opens a window nobody is watching — you want the URL printed so you can relay it |
 | `insta --agent domain status <name>` [`--org <id>`] [`--json`] · `insta --agent domain list` [`--org <id>`] [`--json`] | **(CLI ≥ 0.0.80 — older builds call routes the platform has removed)** every domain the ORG owns, not just ones this project uses — `--org <id>` targets one other than the linked project's default (see the `buy` row above for which verbs take it). After payment the platform registers the name and stops — the domain is inventory, listed with no hostnames, until an `attach`. Poll `status`: the order runs `pending_payment` → `paid` → `registering` → `registered`, and then, once something is attached, → `attaching` → `active`; each hostname runs `pending` → `attached` → `active` (`failed` carries the reason; `insta --agent domain attach <hostname>` on that hostname retries it). Each hostname names **its own** service, because one domain can serve several. Minutes, not seconds |
@@ -643,8 +643,9 @@ to ask before the last step. It needs **CLI ≥ 0.1.21**.
    id from `insta --agent org list --json` (a linked project supplies it when `--org` is left out). It
    is accepted only by a platform that serves blank drafts. Any other platform says so and creates
    nothing, so ask the person for a project instead. A blank draft starts with no service, and a draft
-   with no service cannot be published. Today the `edit` file below changes a service the draft already
-   has and does not add one, so ask the person to add the first service in the console editor.
+   with no service cannot be published. Add its services yourself, and the variables they need, with
+   `add` entries in an `edit` file (see how `edit` reads the file, below), then read the draft and go
+   on with step 2. The person does not need the console for any of it.
 2. **Read it.** `insta --agent template draft <code> --json`. It prints `{template, editorUrl}`, and the
    draft's `publishRequirements`, `updatedAt`, `referenceOptions` and `report` sit under `template`.
    Go through every variable of every service by the `kind` it shows. Only a row that needs a decision
@@ -698,8 +699,9 @@ How to meet each publish requirement (step 4):
 
 | Requirement | How |
 |---|---|
-| `has_service` | restore a service you removed, with `"removed": false` on its `services` entry |
+| `has_service` | add a service with an `add` entry, or restore one you removed with `"removed": false` on its `services` entry |
 | `no_blocked` | fix it in the project, then regenerate, see below |
+| `no_conflicts` | a regenerate brought in a project service or variable with the name of one you added: delete the one you added, or rename it in the project and regenerate |
 | `has_tagline`, `has_category`, `has_readme` | send `tagline`, `category` and `readme` |
 | `required_descriptions` | give each listed `<service>.<VAR>` a `required` choice with a `description` |
 
@@ -709,9 +711,9 @@ project. Make it, then run `insta --agent template regenerate <code>`,
 which rebuilds the draft from the project and keeps what you edited, and read the draft again: the item
 is gone. Regenerate also brings in the services and variables the project gained since, so settle those
 with the table above. A draft with no source project, a blank one or one whose project was deleted,
-cannot be regenerated. For that one, leave out the service the item names (`"removed": true`), or ask the person
-to deal with it in the console editor, or delete the draft and create it again from another project,
-which loses what you edited.
+cannot be regenerated. For that one, leave out the service the item names (`"removed": true`) and add a
+replacement under another name when the template still needs one, or delete the draft and create it
+again from another project, which loses what you edited.
 
 An `edits.json` for steps 2 and 3, for a draft whose `web` service had these variables:
 
@@ -729,15 +731,57 @@ An `edits.json` for steps 2 and 3, for a draft whose `web` service had these var
 }
 ```
 
+The first `edits.json` of a blank draft, for an app with a web service, a worker and a database:
+
+```json
+{
+  "services": [
+    { "name": "web", "add": { "type": "compute", "image": "ghcr.io/acme/relay:1.4", "port": 8080 } },
+    { "name": "jobs", "add": { "type": "compute", "image": "ghcr.io/acme/relay-worker:1.4", "port": null } },
+    { "name": "db", "add": { "type": "postgres" } },
+    { "name": "web", "settings": { "healthcheck": "/healthz" } }
+  ],
+  "variables": [
+    { "service": "web", "name": "DATABASE_URL", "add": true },
+    { "service": "web", "name": "FORWARD_TOKEN", "add": true }
+  ]
+}
+```
+
+Then read the draft: `DATABASE_URL` takes a `reference` to `db` from `referenceOptions`, and
+`FORWARD_TOKEN` stays `required` with a description.
+
 How `edit` reads the file:
 
 - Send only what changes. An entry in `variables` is `{service, name, choice?, newName?}`, where `name`
   is the generator's name for the variable (its `originalName` once renamed), `newName` renames it
   (capital letters, digits and underscores) and `choice: null` goes back to what the generator chose.
-- Today an entry in `services` is `{name, removed?, settings?}` and names a service the draft already
-  has. `removed: true` leaves a service out of the template and `false` restores it. `settings` carries only the fields that change: image, port,
-  healthcheck, command, mountPath and alwaysOn on a compute service, `pgVersion` on Postgres, `public`
-  on storage. A public bucket is readable by anyone, so tell the person.
+- An entry in `services` is `{name, removed?, settings?}` for a service the draft has. `removed: true`
+  leaves a service out of the template and `false` restores it. `settings` carries only the fields that
+  change: image, port, healthcheck, command, mountPath and alwaysOn on a compute service, `pgVersion` on
+  Postgres, `public` on storage. A public bucket is readable by anyone, so tell the person.
+- `{name, add}` in `services` adds a service. The name is lower-kebab (a-z, 0-9, -), at most 39
+  characters, and no service of the draft has it. `add` is
+  `{"type": "compute", "image": "<image>", "port": <port>}` for an app, with `"port": null` for a worker
+  (always on, no health check), or `{"type": "<type>"}` for `postgres`, `redis`, `mysql`, `mongodb` or
+  `storage`. The image is published as typed and the edit checks only its form, so a private image
+  saves and then fails for whoever deploys it. An added web service has no health check and scales to
+  zero when idle. Change that, or give it a volume with `mountPath`, in a `settings` entry of its own.
+- `{service, name, add: true}` in `variables` adds a variable to a web service or a worker, added or
+  from the project. The name starts with a capital letter and uses capital letters, digits and
+  underscores, at most 64 characters, and no variable of the service has it, as its first name or a
+  new one. It starts `required`, so give it a choice with the table above, in an entry of its own.
+- `delete: true` on a `services` or `variables` entry deletes a service or a variable you added, which
+  the draft marks `added: true`, and a deleted service takes everything set under it. One that came
+  from the project is refused: leave it out with `removed: true` or a `{"kind": "removed"}` choice
+  instead. And `removed: true` on a service you added is refused, delete it instead.
+- An `add` or a `delete` entry carries nothing else. Whatever the order of the file, adds run first and
+  deletes last, so the entry that sets or chooses something added can ride in the same file, and a
+  name deleted in one edit can be added again only in the next.
+- A draft holds at most 50 services, 200 variables in one service and 1000 in all, and what it stores
+  for its services, variables and settings takes at most 256 KB. An edit that would leave it over one
+  of these and larger than before is refused. Each user may edit 60 times a minute, and the next edit
+  answers 429.
 - `code` in the file renames the draft before its first publish, and later commands take the new code.
 - One invalid entry refuses the whole edit and saves nothing, and the refusal names the entry.
 - The file may carry `expectedUpdatedAt`, the `updatedAt` you read. Put it there when the person may
