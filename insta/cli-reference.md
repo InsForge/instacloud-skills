@@ -614,7 +614,7 @@ Unknown keys at the top level and under `meta` and `upstream` are not refused. O
 | A `postgres` service is **bare** (`{ type: postgres }`) apart from one optional field, `pgVersion`, an integer Postgres major. Omitted, the platform default applies. It needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
 | A `storage` service is a bucket, bare apart from one optional field, `public: true` for anonymous public-read (omit it for private). It takes no `env`, `image`, `port`, `volume` or region, and its credentials are reached through `env.platform`. `public` belongs to `storage` and `pgVersion` to `postgres`, on no other type. A public bucket is readable by anyone, so tell the person you deploy for, and know that deploying one is gated by `service.setAccess`. It needs **CLI ≥ 0.1.19**. | By the platform, after the upload: on a `web` or `worker`, `invalid template manifest: services.<name>.public: public access is only supported for storage services`, and on a managed database, `invalid template manifest: services.<name>.public: a postgres service is platform-managed and carries no public`, which goes on to say how to declare it bare. A CLI older than the floor stops earlier, locally, with `services.<name>.type must be one of web, worker, postgres, redis, mysql, mongodb`. `insta --agent upgrade`. |
 | A service carries only keys the platform knows. A misspelt key is refused by name, where it used to be ignored. | By the platform, after the upload: `invalid template manifest: services.<name>.<key> is not a template field`. |
-| A `source:` repo must be readable by whoever deploys the template. A public repo is readable by anyone, a private one only through the deployer's own linked GitHub account. | Not at validation. At deploy, before anything is created: the platform refuses with `github_not_linked` or `github_repo_unreachable`, names each repo as `owner/repo@branch` and says how to connect GitHub. At publish, a repo or branch you cannot read yourself is refused with `template_source_unreachable`. |
+| A `source:` repo must be readable by whoever deploys the template. A public repo is readable by anyone, a private one only through the deployer's own linked GitHub account. | Not at validation. At deploy, before anything is created: the platform refuses with `github_not_linked` or `github_repo_unreachable`, names each repo as `owner/repo@branch`, or as `owner/repo` when the template names no branch. The first code says to connect GitHub, and the second says to ask the template's author for access or to install the GitHub App on the repo. At publish, a repo or branch you cannot read yourself is refused with `template_source_unreachable`. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
 reports manifest problems first, so getting past them to the `--set` list (or, for a manifest with
@@ -654,12 +654,14 @@ services:
   different code. The deployed service does not follow the branch afterwards: auto-deploy is off, and
   a manual redeploy builds the branch head again.
 - A build adds minutes to the deploy and waits in the shared build queue. A build that fails marks
-  its service failed with the build's error and log tail, and the run ends `partial` or `failed` like
-  any other.
+  its service failed with the build's error, and with the tail of its log when the build produced
+  one. The run ends `partial` or `failed` like it does for any other failed service.
 - A **public** repo deploys for anyone. A **private** repo deploys only for someone whose own linked
   GitHub account can read it. Anyone else is refused before anything is created, with
   `github_not_linked` (no GitHub linked) or `github_repo_unreachable` (linked, but no access to that
-  repo), and a message that names each repo as `owner/repo@branch` and says how to connect GitHub.
+  repo). The message names each repo as `owner/repo@branch`, or as `owner/repo` when the template
+  names no branch. For the first code it says to connect GitHub, and for the second it says to ask
+  the template's author for access or to install the GitHub App on the repo.
   On a terminal or with `--agent`, and without `--json`, `insta --agent template deploy` handles it
   itself. It prints the platform's message on stderr. When GitHub is not linked it then prints a
   device code and link (relay both to the person) and waits for them to confirm. For each listed repo
@@ -670,6 +672,9 @@ services:
   over. With `--json`, or outside a terminal without `--agent`, it never starts that flow: it prints
   the platform's message on stderr and exits 1, so relay that message to the person. On MCP,
   `insta_deploy_template` answers `invalid_request` with the same message.
+- When GitHub is rate-limiting the platform's reads, a deploy or a publish answers 503 with a message
+  that says to try again later, and trying again later works. It is not an access refusal, so the CLI
+  starts no GitHub flow for it and prints the message.
 - A private repo publishes like any other template, and the gallery does not mark it private. Its
   name is visible to anyone who opens the template. Publishing reads every repo and branch with your
   own access, and one you cannot read is refused with `template_source_unreachable`.
