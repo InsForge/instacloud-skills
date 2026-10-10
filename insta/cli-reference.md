@@ -83,7 +83,7 @@ keys and raw request data must not be included in source control or approval rep
 | `insta --agent build logs <build-id>` [`--source <archive\|github>`] [`--follow`] [`--json`] | read output from a **source build** — the remote build a `deploy`/`compute connect-repo` push kicked off, not the local, offline `build` check above. `--source archive` (default) reads a **deploy operation's** build: `<build-id>` is that operation id, printed as soon as `insta --agent deploy` accepts the operation (stderr with `deploy --json`). `--source github` reads a **GitHub-triggered** build: `<build-id>` is the GitHub build id — read `build.buildId` from `insta --agent compute connect-repo <owner/repo> --json`, or `builds[].id` from `GET /projects/{id}/github/builds`. Prints one snapshot by default; `--follow` polls while building and briefly after it ends, for output that lands late (cannot be combined with `--json`). Governed by `logs.read`; no Depot credentials needed locally. Needs login and a linked project — unlike the offline `build` check above |
 | `insta --agent deploy <dir>` / `--image <url>` [`--branch <b>`] [`--group <g>`] [`--port <n>`] [`--websocket`] [`--endpoint <http\|tcp>`] [`--replace-source`] [`--json`] | deploy to a compute service — a **source dir** (**whether it needs a `Dockerfile` depends on where the service runs**: on an insta-compute service one is *optional* — the CLI packs the directory, uploads it, and the build gateway builds it with nixpacks when there is no Dockerfile; on a legacy-plane service one is still *required*, and without it the command exits 1 naming the options: write a Dockerfile, `--image <url>`, or connect the repo to the service (`insta --agent compute connect-repo <owner/repo> [service]`). The CLI asks the platform which lane serves the target rather than guessing. A CLI that predates this lane answers `source builds are not supported on the insta-compute provider yet` for such a target: run `insta --agent upgrade` and retry. Either way the build is remote — no local Docker; against a local insta-oss daemon the CLI builds with your local docker instead, same command) or a **prebuilt image**. Defaults to the branch's sole compute service; `--group` picks by name (gated: `deploy`). If the installed `deploy --help` advertises worker port zero, `--port 0` deploys a portless worker on insta-compute with no public URL; otherwise use a [template worker](#templates) or the [source-only listener fallback](references/deploy.md#workers-without-a-routed-port). See [worker ports](references/deploy.md#workers-without-a-routed-port) for CLI/platform prerequisites. `--websocket` runs it as a WebSocket app (larger guest + connection-based concurrency); the setting is recorded on the service, so a later `compute restart` or flagless redeploy keeps it (see [operate.md](references/operate.md)). A service connected to a GitHub repo refuses a dir/image deploy (409) unless `--replace-source` is passed (admin): the image then replaces the repo connection. `--endpoint tcp` switches the service to a [raw TCP service](#raw-tcp-services) from this deploy on (`--endpoint http` switches it back; omitted keeps whatever it is). `--json` prints one `{image, machineId, url, branch, group, nextActions}` document on stdout (a tcp service has `url: ""` and an `endpointHost` instead) — build progress moves to stderr so stdout stays parseable |
 | `insta --agent template list` [`--json`] · `insta --agent template info <code>` [`--json`] | browse the platform **template registry**: one row per template (code / version / category / required-var count / deploy count / name — tagline), and the detail view — version, maintainer, source, upstream pin, a services summary (types, ports, volumes, a Postgres service's major as `postgres 17`, and `public` or `private` for a storage bucket, **CLI ≥ 0.1.19**), and every required/optional variable with its description, generator or default |
-| `insta --agent template deploy <code\|./dir\|github-url>` [`--branch <b>`] [`--region <r>`] [`--set <NAME=value>`] [`-y`, `--yes`] [`--json`] | deploy a template's whole service set onto a branch (default: current) — a **registry code**, a **local directory** carrying `insta.template.yaml`, or a **github.com URL** (⚠️ **preview**, needs a recent CLI and `git` on `PATH` — see [Templates](#templates); `https://github.com/<owner>/<repo>`, `/tree/<ref>`, `/tree/<ref>/<dir>`, or a `/blob/…/insta.template.yaml` file link). A bare word is **always** a registry code; local mode needs a path-looking target (`./dir`, `/abs/dir`, `~/dir`, `sub/dir`), so a same-named directory in the working dir can never shadow a registry template. The GitHub form shallow-clones on **your machine** with **your** git credentials — private repositories work when git can already read them (`gh auth login` then `gh auth setup-git`) — reads the manifest from the named directory (never scanning the tree, never following a symlink out of the clone), deletes the clone, and sends the manifest inline. Missing required variables are prompted for on a terminal; `--yes` or no TTY fails with the exact `--set NAME=value` list instead. `secret:N`-generated and defaulted variables are resolved **by the platform** — generated secrets never transit. Renders the 4-step pipeline (create services → write variables → deploy → health check), then the per-service URLs; `--json` replaces all of that with one document, which in GitHub mode carries a leading `source: {repo, ref, path, commit}` where `commit` is the commit that was checked out. May come back `approval_required` (hint on stderr, envelope on stdout with `--json`, **exit 2** — as every gated command). `--region <r>` places **every** service the template creates in that region (a slug from `insta --agent config regions`, default `us-east`), except a storage bucket, which has no region. One region per template deployment, not per service, and it cannot be changed afterwards. A retry (same deployment) may omit it or repeat it, a different value is refused with 409. See [Templates](#templates) |
+| `insta --agent template deploy <code\|./dir\|github-url>` [`--branch <b>`] [`--region <r>`] [`--set <NAME=value>`] [`-y`, `--yes`] [`--json`] | deploy a template's whole service set onto a branch (default: current) — a **registry code**, a **local directory** carrying `insta.template.yaml`, or a **github.com URL** (⚠️ **preview**, needs a recent CLI and `git` on `PATH` — see [Templates](#templates); `https://github.com/<owner>/<repo>`, `/tree/<ref>`, `/tree/<ref>/<dir>`, or a `/blob/…/insta.template.yaml` file link). A bare word is **always** a registry code; local mode needs a path-looking target (`./dir`, `/abs/dir`, `~/dir`, `sub/dir`), so a same-named directory in the working dir can never shadow a registry template. The GitHub form shallow-clones on **your machine** with **your** git credentials — private repositories work when git can already read them (`gh auth login` then `gh auth setup-git`) — reads the manifest from the named directory (never scanning the tree, never following a symlink out of the clone), deletes the clone, and sends the manifest inline. Missing required variables are prompted for on a terminal; `--yes` or no TTY fails with the exact `--set NAME=value` list instead. `secret:N`-generated and defaulted variables are resolved **by the platform** — generated secrets never transit. Renders the 4-step pipeline (create services → write variables → deploy → health check), then the per-service URLs; `--json` replaces all of that with one document, which in GitHub mode carries a leading `source: {repo, ref, path, commit}` where `commit` is the commit that was checked out. May come back `approval_required` (hint on stderr, envelope on stdout with `--json`, **exit 2** — as every gated command). `--region <r>` places **every** service the template creates in that region (a slug from `insta --agent config regions`, default `us-east`), except a storage bucket, which has no region. One region per template deployment, not per service, and it cannot be changed afterwards. A retry (same deployment) may omit it or repeat it, a different value is refused with 409. A manifest service with `source:` builds from a GitHub repo, and a private repo needs your linked GitHub: on a terminal or with `--agent` the command links it and deploys again once, and with `--json`, or outside a terminal without `--agent`, it prints the platform's message on stderr and exits 1 (**CLI ≥ 0.1.24**), see [A service built from a GitHub repo](#a-service-built-from-a-github-repo). See [Templates](#templates) |
 | `insta --agent template create` [`--project <id>`] [`--blank`] [`--name <name>`] · `template drafts` · `template draft <code>` · `template edit <code> --patch <file\|->` · `template regenerate <code>` · `template publish <code>` [`--yes`] · `template unpublish <code>` · `template delete <code>` [`--yes`] (each takes `--json`, and every one but `create` from a project takes `--org <id>`) | author a **community template** in your org and publish it to the community gallery. The draft is the one the console's template editor shows, so the person can open it and edit by hand while you work. `create` generates a draft from the linked project (`--project <id>` names another) and prints its code, its status and a link to the console editor. `create --blank` makes an empty draft instead and takes `--name`, and a platform that does not serve blank drafts yet says so and creates nothing. `drafts` lists the org's templates with their status, and with `--json` it prints one summary per template (`code`, `name`, `status`, `publishedVersion`, `hasUnpublishedChanges`, `takenDown`, `updatedAt` and the like) with no services, variables or publish requirements, which `draft <code> --json` prints for one draft. `draft <code>` prints one: its services, every variable with the choice made for it, `publishRequirements` and `updatedAt`, and `--json` prints the whole draft, with `referenceOptions` and `report` as well. `edit <code> --patch <file>` sends the file (`-` reads stdin) as the editor's own PATCH body, which also adds and deletes services and variables, so a blank draft gets its services from you, and uses the draft's current `updatedAt` when the file carries no `expectedUpdatedAt`. `regenerate <code>` rebuilds the draft from its source project and keeps what you edited, which is how a blocked item clears once you fixed it in the project, and it refuses a draft that has no source project (a blank draft, or one whose project was deleted). `publish <code>` lists the template in the community gallery **at once, with no review**: on a terminal it says so and asks first, and anywhere else it needs `--yes` and otherwise exits non-zero having published nothing. `unpublish <code>` takes it out again and deployed copies keep running. `delete <code>` removes a draft that was never published and confirms like `publish`. The org is the linked project's, or `--org <id>`. **No approval**: `create` from a project reads its secrets, a read every agent policy mode allows, and the platform decides the other commands by org membership alone, so no policy refusal and no approval applies, and the person's yes before `publish` is the only consent check. Needs **CLI ≥ 0.1.21**. See [Publishing a community template](#publishing-a-community-template) |
 | `insta --agent domain search <keyword>` [`--tlds com,dev`] [`--org <id>`] [`--json`] | **buy a domain THROUGH InstaCloud** (a developer-owned/BYO domain skips `search`/`buy` entirely — go straight to `domain attach` below): purchasable names with the price you pay and the yearly renewal. A label (`myapp`) comes back across the extensions the registrar suggests, or the ones `--tlds` names (at most 50); a full name (`myapp.com`) is always in the answer unless `--tlds` leaves its extension out, even when it cannot be bought, so a plain name you typed is never answered with silence — but only a plain one: a pasted `www.myapp.com`, or a trailing dot, is answered for the label alone and the string you typed is absent. An extension is sold unless registering it needs something InstaCloud does not collect (registrant or residency fields, a registry notice or acknowledgement — `.ca`, `.fr`, …). Such a name is `unavailable` wherever you asked for it, and a suggestion in one is dropped. **`premium: true` is a registry premium name**, buyable when `purchasable` at its own price — say so when you relay the price. It is in `--json` only: the table prints a premium row as a plain price with no `(renews …)`. Its row carries no `renewalPriceCents`; the `buy` order may. **Read `reason`** — one with no price and a registrar refusal each say so in their own words. `unavailable` is the fallback, and the one to be careful with: it does **not** distinguish "the registrar says it is taken" from "a name we cannot sell", so do not report either as the reason when that is all you have |
 | `insta --agent domain buy <name>` [`--years n`] [`--no-open`] [`--json`] | **(CLI ≥ 0.0.80 — older builds call routes the platform has removed)** order it. **A domain belongs to the ORG** — the one your linked project is in. `list`, `status`, `search` and `records` take `--org <id>` to name another; `buy` and `attach` do not, because both bind the linked project: buying spends that org's money under that project's policy, and attaching names one of its services. Your agent policy is read at the project your session is bound to (`insta agent setup`), and that project must be in the org paying. A credential that names no project — an `insta_` key, MCP — is judged on the whole org instead: every project in it must be `full_access`. **Buying binds nothing**: the registered name serves nothing until `domain attach` says what it should serve. Answers a **Stripe Checkout URL a human must open** — nothing is registered until they pay, and registrations are **non-refundable**, so relay the URL and stop. Gated: `domain.purchase` — **`full_access`, which a new project starts on, allows it outright**; `branch_specific` answers `approval_required` (202 + exit 2, see [Approval relay](SKILL.md#approval-relay-critical--gated-actions)); `read_only` refuses. Paying the Checkout link needs a human either way. Some registries take fixed terms (`.ai` is 2-year only) — a term they refuse is a 400 **before** any payment. **Pass `--no-open`**: by default this spawns the host's browser at the Checkout link, which on an agent's machine opens a window nobody is watching — you want the URL printed so you can relay it |
@@ -516,7 +516,7 @@ Moved to [references/deploy.md](references/deploy.md) (backend / full-stack / SP
 
 ## Templates
 
-A **template** is a whole service set (images, ports, volumes, env) published as one unit —
+A **template** is a whole service set (images or GitHub repos, ports, volumes, env) published as one unit —
 `insta --agent template deploy <code>` creates those services on a branch, writes their variables, deploys
 and health-checks them, instead of a hand-rolled `service add` + `secrets set` + `deploy` sequence.
 To list a template in the community gallery for others to deploy, see
@@ -534,7 +534,9 @@ To list a template in the community gallery for others to deploy, see
   deleted before the deploy starts, so private repositories need no InstaCloud GitHub
   authorization — only git credentials that can already read them (`gh auth login`, then
   `gh auth setup-git`). A URL for any other host is refused by name, not mistaken for a directory.
-  The manifest's images must still be **public**: the platform pulls anonymously.
+  The manifest's images must still be **public**: the platform pulls anonymously. This reads the
+  manifest from GitHub. A service the platform builds from a GitHub repo is a different thing, the
+  manifest's `source:` key, see [A service built from a GitHub repo](#a-service-built-from-a-github-repo).
 
   > ⚠️ **Preview — the GitHub URL target only.** Registry codes and local directories are
   > unaffected. Two things make it unavailable, and both fail in ways worth recognising.
@@ -627,25 +629,95 @@ pin), `constraints` (`oneOf` / `allOf` over variable names, for variables that o
 together), and `meta` (`name`, `tagline`, `category`, `tags`) which only the registry renders.
 Unknown keys at the top level and under `meta` and `upstream` are not refused. Only a service entry is strict.
 
-**Six rules that are easy to get wrong, and where you find out:**
+**Seven rules that are easy to get wrong, and where you find out:**
 
 | Rule | Where it bites |
 |---|---|
 | The image must be **publicly pullable**. A private repository is fine, a private image is not: the platform pulls anonymously, with no credential field anywhere. | Not at validation. The deploy creates services, then the machine fails to pull and the health gate fails. GHCR package visibility is separate from repository visibility, so a private repo can publish a public package. |
-| Use `image:`, never `build:`. The platform does not build from source for template deploys. Push the image yourself first. | Server-side, immediately: `services.<name> uses build: — server-side template deploys support image services only`. |
+| Use `image:` or `source:`, never `build:`. `build:` names a Dockerfile in a template directory, which the platform cannot read. To build from code, name the repo with `source:`, see [A service built from a GitHub repo](#a-service-built-from-a-github-repo). | Server-side, immediately: `services.<name> uses build:, which names a Dockerfile in the template directory that a cloud deploy cannot read. Use image for a published image, or source for a GitHub repository`. |
 | Deployable types are `web`, `worker`, `storage`, and bare `postgres` / `redis` / `mysql` / `mongodb`. A `worker` is portless and always-on: it must not declare `port`, `healthcheck` or `alwaysOn: false`, nothing is routed to it, and no other service can reference its `url`/`host`. | Locally, before the upload: `services.<name>.port: a worker has no routed port — remove it`. |
 | A `postgres` service is **bare** (`{ type: postgres }`) apart from one optional field, `pgVersion`, an integer Postgres major. Omitted, the platform default applies. It needs **CLI ≥ 0.0.62**. Older CLIs reject it locally, `services.<name>.type must be web or worker`, even though the platform accepts it. | Locally on an old CLI, which is why the error names a type the platform does in fact take. `insta --agent upgrade`. |
 | A `storage` service is a bucket, bare apart from one optional field, `public: true` for anonymous public-read (omit it for private). It takes no `env`, `image`, `port`, `volume` or region, and its credentials are reached through `env.platform`. `public` belongs to `storage` and `pgVersion` to `postgres`, on no other type. A public bucket is readable by anyone, so tell the person you deploy for, and know that deploying one is gated by `service.setAccess`. It needs **CLI ≥ 0.1.19**. | By the platform, after the upload: on a `web` or `worker`, `invalid template manifest: services.<name>.public: public access is only supported for storage services`, and on a managed database, `invalid template manifest: services.<name>.public: a postgres service is platform-managed and carries no public`, which goes on to say how to declare it bare. A CLI older than the floor stops earlier, locally, with `services.<name>.type must be one of web, worker, postgres, redis, mysql, mongodb`. `insta --agent upgrade`. |
 | A service carries only keys the platform knows. A misspelt key is refused by name, where it used to be ignored. | By the platform, after the upload: `invalid template manifest: services.<name>.<key> is not a template field`. |
+| A `source:` repo must be readable by whoever deploys the template. A public repo is readable by anyone, a private one only through the deployer's own linked GitHub account. | Not at validation. At deploy, before anything is created: the platform refuses with `github_not_linked` or `github_repo_unreachable`, names each repo as `owner/repo@branch`, or as `owner/repo` when the template names no branch. The first code says to connect GitHub, and the second says to ask the template's author for access or to install the GitHub App on the repo. At publish, a repo or branch you cannot read yourself is refused with `template_source_unreachable`. |
 
 Validate before you push by deploying the directory: `insta --agent template deploy ./my-template -y`
 reports manifest problems first, so getting past them to the `--set` list (or, for a manifest with
 no unset required variables, to the deploy itself) means it parsed and validated locally. That
-covers the structure of `web` and `worker` services, pinned images (`:latest` and tagless are
-rejected) and described variables. The CLI no longer judges any other service type or field, so a
-bucket, a `pgVersion` or a misspelt key is first answered by the platform when the deploy is
-submitted, the last rows above. It also does **not** cover the first two rows, which pass locally
-and fail later: a private image and a `build:` key.
+covers the structure of `web` and `worker` services, a `source:` block's fields, pinned images
+(`:latest` and tagless are rejected) and described variables. The CLI no longer judges any other
+service type or field, so a bucket, a `pgVersion` or a misspelt key is first answered by the
+platform when the deploy is submitted. It also does **not** cover three rows, which pass locally
+and fail later: a private image, a `build:` key and a private repo the deployer cannot read.
+
+#### A service built from a GitHub repo
+
+A `web` or `worker` service can name a GitHub repo instead of an image. The platform builds it when
+the template deploys, the way it builds a project service connected to a repo:
+
+```yaml
+services:
+  web:
+    type: web
+    source:
+      owner: acme
+      repo: shop
+      branch: main              # optional: the repo's default branch at deploy time
+      rootDir: apps/web         # optional: the directory to build, the repo root when left out
+      buildCommand: pnpm build  # optional: used only when the build directory has no Dockerfile
+    port: 3000
+    command: node server.js     # optional: the start command
+```
+
+- A compute service takes exactly one of `image`, `build` and `source`, and a database or a bucket
+  takes none of them. `source` carries only these five keys. There is no commit to pin and no public
+  or private flag.
+- The build directory is `rootDir`, or the repo root. A Dockerfile there is built as it is and
+  `buildCommand` is ignored. Without one, nixpacks detects the app and builds it with `buildCommand`
+  when that is set.
+- Every deploy builds the head of the branch at that moment, so two deploys a week apart can run
+  different code. The deployed service does not follow the branch afterwards: auto-deploy is off, and
+  a manual redeploy builds the branch head again.
+- A build adds minutes to the deploy and waits in the shared build queue. A build that fails marks
+  its service failed with the build's error, and with the tail of its log when the build produced
+  one. The run ends `partial` or `failed` like it does for any other failed service.
+- A **public** repo deploys for anyone. A **private** repo deploys only for someone whose own linked
+  GitHub account can read it. Anyone else is refused before anything is created, with
+  `github_not_linked` (no GitHub linked) or `github_repo_unreachable` (linked, but no access to that
+  repo). The message names each repo as `owner/repo@branch`, or as `owner/repo` when the template
+  names no branch. For the first code it says to connect GitHub, and for the second it says to ask
+  the template's author for access or to install the GitHub App on the repo.
+  On a terminal or with `--agent`, and without `--json`, `insta --agent template deploy` handles it
+  itself. It prints the platform's message on stderr. When GitHub is not linked it then prints a
+  device code and link (relay both to the person) and waits for them to confirm. For each listed repo
+  it cannot reach yet it prints and opens the GitHub App install page, or the App's settings page when
+  the repo's owner already has the App installed, and polls for up to 15 minutes until that repo is
+  readable. Then it deploys again, once, so a second refusal ends the command with that message. A
+  code or an access that is not confirmed in time ends it with an error, and running it again starts
+  over. With `--json`, or outside a terminal without `--agent`, it never starts that flow: it prints
+  the platform's message on stderr and exits 1, so relay that message to the person. On MCP,
+  `insta_deploy_template` answers `invalid_request` with the same message.
+- When GitHub is rate-limiting the platform's reads, a deploy or a publish answers 503 with a message
+  that says to try again later, and trying again later works. It is not an access refusal, so the CLI
+  starts no GitHub flow for it and prints the message.
+- A private repo publishes like any other template, and the gallery does not mark it private. Its
+  name is visible to anyone who opens the template. Publishing reads every repo and branch with your
+  own access, and one you cannot read is refused with `template_source_unreachable`.
+- Deploying a manifest with `source:` from a directory or a GitHub URL needs **CLI ≥ 0.1.24**. An
+  older CLI refuses it locally with `services.<name>: one of image or build is required`, and
+  `insta --agent upgrade` fixes that. A registry code deploys on any CLI. Only InstaCloud cloud
+  builds a `source:` service, and a self-hosted runtime refuses the template.
+
+#### Which to use: an image or a GitHub repo
+
+- **Someone else's app that runs from its published image:** reference that image, pinned to a
+  version. It deploys in seconds and does not break when the upstream branch does.
+- **Someone else's app that needs changes** (an entrypoint, config, a different start command): put a
+  Dockerfile that starts `FROM` the upstream image in a repo of your own, and name that repo with
+  `source:`. Building your own image, pushing it to a public registry and referencing it works too.
+- **Your own app, a starter, or a private repo:** `source:`. Deploy the repo into a project, make it
+  work there, then generate the template from the project (`insta --agent template create`), which
+  writes `source:` for every service the project builds from GitHub.
 
 ### Publishing a community template
 
@@ -670,7 +742,11 @@ to ask before the last step. It needs **CLI ≥ 0.1.21**.
    nothing, so ask the person for a project instead. A blank draft starts with no service, and a draft
    with no service cannot be published. Add its services yourself, and the variables they need, with
    `add` entries in an `edit` file (see how `edit` reads the file, below), then read the draft and go
-   on with step 2. The person does not need the console for any of it.
+   on with step 2. The person does not need the console for any of it. A service the project builds
+   from a GitHub repo comes into the draft as `source:` (owner, repo, branch, root directory, build
+   command, and its start command as `command`), never as its built image, so the code of a private
+   repo is not published. Whoever deploys a private repo needs GitHub access to it, see
+   [A service built from a GitHub repo](#a-service-built-from-a-github-repo).
 2. **Read it.** `insta --agent template draft <code> --json`. It prints `{template, editorUrl}`, and the
    draft's `publishRequirements`, `updatedAt`, `referenceOptions` and `report` sit under `template`.
    Go through every variable of every service by the `kind` it shows. Only a row that needs a decision
@@ -776,6 +852,18 @@ The first `edits.json` of a blank draft, for an app with a web service, a worker
 Then read the draft: `DATABASE_URL` takes a `reference` to `db` from `referenceOptions`, and
 `FORWARD_TOKEN` stays `required` with a description.
 
+The same `web` service built from its GitHub repo instead of an image. On MCP the entry is the same,
+inside `services` of `insta_update_template_draft`:
+
+```json
+{
+  "services": [
+    { "name": "web", "add": { "type": "compute", "source": { "owner": "acme", "repo": "relay", "branch": "main" }, "port": 8080 } },
+    { "name": "web", "settings": { "healthcheck": "/healthz" } }
+  ]
+}
+```
+
 How `edit` reads the file:
 
 - Send only what changes. An entry in `variables` is `{service, name, choice?, newName?}`, where `name`
@@ -783,15 +871,25 @@ How `edit` reads the file:
   (capital letters, digits and underscores) and `choice: null` goes back to what the generator chose.
 - An entry in `services` is `{name, removed?, settings?}` for a service the draft has. `removed: true`
   leaves a service out of the template and `false` restores it. `settings` carries only the fields that
-  change: image, port, healthcheck, command, mountPath and alwaysOn on a compute service, `pgVersion` on
-  Postgres, `public` on storage. A public bucket is readable by anyone, so tell the person.
+  change: image or source, port, healthcheck, command, mountPath and alwaysOn on a compute service,
+  `pgVersion` on Postgres, `public` on storage. A public bucket is readable by anyone, so tell the
+  person. A `source` setting replaces the whole source, so send `owner` and `repo` with the branch,
+  `rootDir` or `buildCommand` you change. A service keeps its kind: `source` on an image service, or
+  `image` on a source service, is refused with `<name> keeps its kind: delete it and add a new one to
+  switch between image and source`. To switch, remove the old service and add a new one under another
+  name: `delete: true` for a service you added, `removed: true` for one that came from the project,
+  which cannot be deleted from a draft.
 - `{name, add}` in `services` adds a service. The name is lower-kebab (a-z, 0-9, -), at most 39
   characters, and no service of the draft has it. `add` is
-  `{"type": "compute", "image": "<image>", "port": <port>}` for an app, with `"port": null` for a worker
-  (always on, no health check), or `{"type": "<type>"}` for `postgres`, `redis`, `mysql`, `mongodb` or
-  `storage`. The image is published as typed and the edit checks only its form, so a private image
-  saves and then fails for whoever deploys it. An added web service has no health check and scales to
-  zero when idle. Change that, or give it a volume with `mountPath`, in a `settings` entry of its own.
+  `{"type": "compute", "image": "<image>", "port": <port>}` for an app that runs an image,
+  `{"type": "compute", "source": {"owner": "<owner>", "repo": "<repo>", "branch": "<branch>"}, "port": <port>}`
+  for an app the platform builds from a GitHub repo (`branch`, `rootDir` and `buildCommand` are
+  optional), with `"port": null` for a worker either way (always on, no health check), or
+  `{"type": "<type>"}` for `postgres`, `redis`, `mysql`, `mongodb` or `storage`. The image is published
+  as typed and the edit checks only its form, so a private image saves and then fails for whoever
+  deploys it. A private repo saves too, and deploys only for someone whose linked GitHub can read it.
+  An added web service has no health check and scales to zero when idle. Change that, or give it a
+  volume with `mountPath`, in a `settings` entry of its own.
 - `{service, name, add: true}` in `variables` adds a variable to a web service or a worker, added or
   from the project. The name starts with a capital letter and uses capital letters, digits and
   underscores, at most 64 characters, and no variable of the service has it, as its first name or a
