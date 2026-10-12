@@ -52,9 +52,9 @@ CMD ["node", "server.js"]
 ```
 
 Then: `insta --agent deploy .` (port auto-derives from `EXPOSE 3000`). Route handlers read `process.env`
-for `DATABASE_URL` / the S3 bundle. Pool Postgres at module scope. Postgres is always-on by default;
-if you switched it to scale-to-zero, set `idleTimeoutMillis` under its suspend window so an
-idle-suspended DB doesn't leave a dead socket.
+for `DATABASE_URL` / the S3 bundle. Pool Postgres at module scope; if the database was switched to scale-to-zero (new ones are born
+always-on), set `idleTimeoutMillis` under its suspend window so an idle-suspended DB doesn't leave a
+dead socket.
 
 ## Node/Express (API or full-stack, backend serves the built SPA)
 
