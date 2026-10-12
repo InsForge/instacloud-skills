@@ -57,11 +57,12 @@ stats` on the branch's containers directly if you must, and don't retry the CLI 
 **Billing is always by actual app usage** — vCPU·min burned, GB·min of RAM resident, storage,
 egress — never by machine size × hours. The idle mode only changes what "idle" consumes:
 
-- **Always-on (opt-in for compute, all plans; automatic for a worker)**: machines never
-  suspend, so there are **no cold starts** — but the idle app keeps its RAM resident (plus a
-  trickle of vCPU), and that real usage bills continuously (roughly $1–2.50/month for an idle
-  minimum-spec app, mostly RAM).
-- **Scale-to-zero (the default for new compute and for postgres)**: idle machines suspend and
+- **Always-on (the default for new databases; opt-in for compute, all plans; automatic for a
+  worker)**: machines never suspend, so there are **no cold starts** — but the idle app keeps its
+  RAM resident (plus a trickle of vCPU), and that real usage bills continuously (roughly
+  $1–2.50/month for an idle minimum-spec app, mostly RAM). An always-on database likewise bills its resident memory while
+  idle (about $10 per resident GB per month).
+- **Scale-to-zero (the default for new compute)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
   start (typically a few seconds) on the first request after idling. On the insta-compute plane
   (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means no
@@ -77,8 +78,17 @@ Flip it any time — it is a latency/cost dial, not a plan feature:
 - `insta --agent service add compute <name> --always-on` — create always-on (`--no-always-on` states the default explicitly; refused with `--port 0`).
 - `insta --agent compute always-on on|off [service]` — toggle a live service.
 - `insta --agent postgres always-on on|off [service]` — the same dial for a postgres service:
-  `off` (default) suspends the idle instance and cold-starts the first connection after idle;
-  `on` keeps it warm.
+  `on` (the default) keeps it warm; `off` opts into scale-to-zero, suspending the idle instance
+  and cold-starting the first connection after idle.
+
+**New databases are born always-on** — postgres, redis, mysql and mongodb alike —
+so an app waking from scale-to-zero doesn't also wait on a database cold start. A brand-new
+postgres reading `scaleToZero=false` is that default, not a misconfiguration. Databases created
+before the change keep the mode they had. To let an idle database sleep, switch it after creation
+with `insta --agent postgres always-on off` (or `insta --agent <redis|mysql|mongodb> always-on off`):
+the CLI can't choose the mode at create time for a database yet — `service add --always-on` /
+`--no-always-on` are compute-only and refused for a database. (Self-hosted insta-oss keeps its own
+defaults: Postgres scales to zero there.)
 
 ## Resource ceilings (limits)
 

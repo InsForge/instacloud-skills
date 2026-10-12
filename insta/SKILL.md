@@ -377,7 +377,9 @@ not machine size × hours). New compute services are born scale-to-zero: an idle
 nothing at the price of a cold start, and inbound requests and outbound traffic both count as
 activity, so an app doing outbound work stays up while it works. Always-on (`--always-on` at create,
 or `insta --agent compute always-on on`) removes cold starts, and the idle app's resident RAM bills at
-actual usage; a worker (`--port 0`) is always-on regardless. Postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
+actual usage; a worker (`--port 0`) is always-on regardless. New databases (postgres included) are the
+opposite: born always-on, so they bill resident memory while idle; `insta --agent postgres always-on off`
+opts one into scale-to-zero after creation (the CLI can't choose it at create time for postgres yet) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
 `insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
 **and replica CAP** (`insta --agent compute scale` — horizontal; scale-to-zero runs 1..cap on demand, always-on runs the cap): a new service is born at its plan's
