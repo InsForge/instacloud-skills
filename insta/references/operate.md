@@ -57,11 +57,12 @@ stats` on the branch's containers directly if you must, and don't retry the CLI 
 **Billing is always by actual app usage** — vCPU·min burned, GB·min of RAM resident, storage,
 egress — never by machine size × hours. The idle mode only changes what "idle" consumes:
 
-- **Always-on (opt-in for compute, all plans; automatic for a worker)**: machines never
+- **Always-on (the default for new databases — postgres, redis, mysql, mongodb; opt-in for compute,
+  all plans; automatic for a worker)**: machines never
   suspend, so there are **no cold starts** — but the idle app keeps its RAM resident (plus a
   trickle of vCPU), and that real usage bills continuously (roughly $1–2.50/month for an idle
   minimum-spec app, mostly RAM).
-- **Scale-to-zero (the default for new compute and for postgres)**: idle machines suspend and
+- **Scale-to-zero (the default for new compute; opt-in for databases)**: idle machines suspend and
   auto-wake on the next request. An idle service costs **nearly nothing**; the trade is a cold
   start (typically a few seconds) on the first request after idling. On the insta-compute plane
   (`insta-compute` in `agent manifest --json`; the text view prints `compute`), idle means no
@@ -77,8 +78,10 @@ Flip it any time — it is a latency/cost dial, not a plan feature:
 - `insta --agent service add compute <name> --always-on` — create always-on (`--no-always-on` states the default explicitly; refused with `--port 0`).
 - `insta --agent compute always-on on|off [service]` — toggle a live service.
 - `insta --agent postgres always-on on|off [service]` — the same dial for a postgres service:
-  `off` (default) suspends the idle instance and cold-starts the first connection after idle;
-  `on` keeps it warm.
+  `on` (default for new postgres) keeps it warm, so a compute service waking from scale-to-zero
+  never also waits on a database cold start; `off` suspends the idle instance and cold-starts the
+  first connection after idle. `insta --agent <redis|mysql|mongodb> always-on on|off` is the same
+  for the managed databases, also born `on`.
 
 ## Resource ceilings (limits)
 

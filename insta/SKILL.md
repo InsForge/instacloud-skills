@@ -58,9 +58,10 @@ types you build directly against are:
   you bind into compute env (below) — no vendor SDK or vendor skill. The DB is also publicly
   dialable from outside compute: `insta --agent postgres url` prints the connection string and
   `insta --agent postgres connect` opens a psql session — that's how you (or a human) reach it from a laptop,
-  a migration script, or any external tool. It scales to zero when
-  idle, so keep your pool's `idleTimeoutMillis` under the suspend window (see
-  [frameworks.md](references/frameworks.md)).
+  a migration script, or any external tool. New databases are born **always-on** (never scale to
+  zero, so a compute service waking from scale-to-zero never waits on a database cold start too);
+  if you switch one to scale-to-zero (`insta --agent postgres always-on off`), keep your pool's
+  `idleTimeoutMillis` under the suspend window (see [frameworks.md](references/frameworks.md)).
 - **storage** — S3-compatible object/blob storage. Point any S3 library at the bound `AWS_*` /
   `BUCKET_NAME` env — no vendor SDK. Set the endpoint explicitly or the client talks to real AWS;
   each branch normally gets its own forked bucket (legacy pre-snapshot projects share one — see
@@ -377,7 +378,9 @@ not machine size × hours). New compute services are born scale-to-zero: an idle
 nothing at the price of a cold start, and inbound requests and outbound traffic both count as
 activity, so an app doing outbound work stays up while it works. Always-on (`--always-on` at create,
 or `insta --agent compute always-on on`) removes cold starts, and the idle app's resident RAM bills at
-actual usage; a worker (`--port 0`) is always-on regardless. Postgres is unchanged (`insta --agent postgres always-on`, off by default) — see
+actual usage; a worker (`--port 0`) is always-on regardless. Databases are the opposite: new postgres,
+redis, mysql and mongodb services are born **always-on** (`insta --agent postgres always-on off` /
+`insta --agent <redis|mysql|mongodb> always-on off` opts one into scale-to-zero) — see
 [operate.md](references/operate.md). **The paid levers are the resource CEILING** (`insta --agent compute limits`,
 `insta --agent postgres limits` — per-machine size, see [operate.md](references/operate.md))
 **and replica CAP** (`insta --agent compute scale` — horizontal; scale-to-zero runs 1..cap on demand, always-on runs the cap): a new service is born at its plan's
