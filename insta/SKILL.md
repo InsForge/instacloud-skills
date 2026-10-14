@@ -58,8 +58,8 @@ types you build directly against are:
   you bind into compute env (below) — no vendor SDK or vendor skill. The DB is also publicly
   dialable from outside compute: `insta --agent postgres url` prints the connection string and
   `insta --agent postgres connect` opens a psql session — that's how you (or a human) reach it from a laptop,
-  a migration script, or any external tool. It scales to zero when
-  idle, so keep your pool's `idleTimeoutMillis` under the suspend window (see
+  a migration script, or any external tool. If the database was switched to scale-to-zero (new ones
+  are born always-on), keep your pool's `idleTimeoutMillis` under its suspend window (see
   [frameworks.md](references/frameworks.md)).
 - **storage** — S3-compatible object/blob storage. Point any S3 library at the bound `AWS_*` /
   `BUCKET_NAME` env — no vendor SDK. Set the endpoint explicitly or the client talks to real AWS;
