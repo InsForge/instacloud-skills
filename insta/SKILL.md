@@ -197,7 +197,7 @@ DB) + `insta --agent service add compute app` → bind needed service credential
 (`insta --agent secrets sources`, then `insta --agent secrets bind DATABASE_URL postgres/db --to compute/app`) →
 `insta --agent deploy . --port <the port the app listens on>` → **verify the printed URL serves** (below).
 The app reads `process.env` creds. For a portless insta-compute worker, first check that the installed
-CLI's `service add --help` and `deploy --help` advertise worker port zero before using `--port 0`.
+CLI's `insta --agent service add --help` and `insta --agent deploy --help` advertise worker port zero before using `--port 0`.
 Otherwise use a template `type: worker` with a prebuilt image, or the
 [source-only listener fallback](references/deploy.md#workers-without-a-routed-port). Keep workers
 always-on. Portless deployments have no public URL; verify status/logs plus a completed job.

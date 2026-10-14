@@ -57,7 +57,7 @@ clones keep the listen port and shift the **host** mapping +1000.
 
 ## Workers without a routed port
 
-First check the installed CLI's `service add --help` and `deploy --help`. Only if both advertise
+First check the installed CLI's `insta --agent service add --help` and `insta --agent deploy --help`. Only if both advertise
 worker port zero, use `insta --agent service add compute worker --port 0` and deploy it with
 `insta --agent deploy . --group worker --port 0` or the equivalent `--image` form on insta-compute.
 Otherwise use a [template](../cli-reference.md#templates) with `type: worker` and a prebuilt image
