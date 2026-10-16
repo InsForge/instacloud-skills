@@ -319,6 +319,7 @@ Work the list in order — these cover ~all real failures seen so far:
    than that, window it: `--since 2h`, or `--from <unix|ISO>` / `--to`.
 5. **Stale CLI**: unrecognized command / odd 4xx → `insta --agent upgrade` (or re-run the installer), retry.
 6. **Gate, not failure**: a 202 "approval required" is not an error — relay it (governance.md).
+7. **Bad version is live** (it serves, then breaks): `insta --agent compute deployments [service]`, then `insta --agent compute rollback [service] --yes` puts the previous version back with no rebuild. It keeps current variables and pauses GitHub auto-deploy. Then fix forward.
 
 ## Failure-reporting discipline
 
