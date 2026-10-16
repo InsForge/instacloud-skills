@@ -12,7 +12,8 @@ description: >
   `insta` CLI), when the user mentions InstaCloud or insta, AND when they ask to
   deploy an app, need a database/backend/object storage, want a scheduled or
   recurring task, want preview or
-  per-agent sandbox environments, want branchable infrastructure, want to
+  per-agent sandbox environments, want a cloud machine for a coding agent such
+  as Claude Code or Codex, want branchable infrastructure, want to
   migrate an existing app in from Heroku / Railway / Fly / Render, or mention
   agent setup or MCP — even if they don't say "InstaCloud" explicitly. Also
   covers the insta-cloud remote MCP server (insta_* tools) and the self-hosted
@@ -176,8 +177,8 @@ answer to the user, not a refusal to engage:
 | Not a fit | Why |
 | --- | --- |
 | GPU training or large model inference | no GPUs are offered |
-| Multi-container docker compose apps | tenant compute has no Docker-in-Docker and no nested virtualization |
-| An interactive shell someone keeps pivoting inside | that shell is `insta compute ssh`, gated behind approval, and it lands on the guest root rather than inside a container. This row is not about `compute exec`, and it is not about branch environments: a branch per agent is the supported way to isolate work, and it is one of the directions above |
+| Multi-container docker compose apps | containers do start inside a compute machine, but `docker exec` does not reach inside them, and compose health checks run through `docker exec`. A stack gated on `depends_on: condition: service_healthy` never comes up |
+| A sandbox the app keeps re-entering | an agent sandbox holds a container and runs command after command inside it with `docker exec`, and on tenant compute `docker exec` and `docker attach` do not land inside the container. A shell for a person is not this row: the `claude-code`, `codex` and `pi` templates are that, reached in a browser or with `insta compute ssh`. Nor is it about branch environments: a branch per agent is the supported way to isolate work, and it is one of the directions above |
 | A script that runs once and exits, deployed as a service | the health gate expects something that stays up and answers. When a service already exists, run the script inside it with `insta compute exec`, which is built for one-shot commands and bounded at 180s |
 | A static frontend whose only backend lives elsewhere | nothing in the repo runs a server, so there is no environment to fork and no state to keep, and a static host does this better. If that backend is also the user's, judge its repository instead |
 
@@ -204,6 +205,51 @@ always-on. Portless deployments have no public URL; verify status/logs plus a co
 
 **"Set up / onboard / sign up":** cloud → `insta --agent login` (browser sign-in; relay the printed link
 if no browser opens) or `--email/--password`; then `insta --agent project create`. Local/oss → nothing to set up beyond the daemon.
+
+**"A cloud machine for my coding agent" ("a cloud box for Claude Code", "run Codex in the cloud",
+"keep my agent working while my laptop is closed"):** deploy the agent's workspace template rather
+than building a compute service by hand. `claude-code`, `codex` and `pi` each give a browser
+terminal with that agent's CLI installed, and `HOME` on a persistent `/data` volume. Run the chain
+and announce it:
+
+1. `insta --agent status`, then log in and `insta --agent project create <name>` as above if unlinked.
+   An already linked project needs the session from *Agent execution mode* first. Choose the branch
+   the machine lives on: a long-lived one, usually `main`, whichever branch is linked. A per-task
+   branch takes the machine and its `/data` with it when the branch is deleted. Every command below
+   passes it as `--branch <branch>`, since without it they act on the linked branch instead.
+2. Pick the template for the agent the user named: `claude-code`, `codex` or `pi`.
+   `insta --agent template info <template>` lists its required and optional variables. Ask the user
+   for a terminal username only, made of letters, digits, `.`, `_` and `-` (up to 32), since it goes
+   into a command as is. Ask again for anything else. Never take the password, or any other secret
+   such as an API key, through the conversation or into a command you run: the password guards a
+   root shell at a public URL, and whatever you type lands in your transcript. The user sets those
+   in step 5.
+3. `insta --agent template deploy <template> --branch <branch> --set ADMIN_USERNAME=<u> --set ADMIN_PASSWORD="$(openssl rand -hex 24)" -y --json`.
+   The password is a throwaway generated inside the command, so its value never appears to you or
+   anyone, and the user replaces it in step 5. Use the service name and URL it prints. A second
+   deploy on the same branch gets its own copy with a suffixed name such as `claude-code-2`.
+4. `insta --agent compute always-on on <service> --branch <branch>` when the user wants agents to
+   keep running with nobody connected, which is usually why they asked. It bills the uptime, so say
+   so when you do it.
+5. Hand the user two commands to run in their own terminal, from this project's directory:
+   - Their password, typed without echo:
+     `(read -rs P && printf '%s' "$P" | insta secrets set ADMIN_PASSWORD --service compute/<service> --branch <branch>)`.
+     The parentheses keep `P` out of their shell and still report a failure.
+     The machine redeploys with it within seconds. An optional secret goes in the same way under
+     its own name. A lost password is replaced by running this again.
+   - `insta compute ssh <service> --setup --project <project-id> --branch <branch>`, with the id from
+     `project.projectId` in `insta --agent status --json`. It adds the `<service>.insta` alias to
+     their `~/.ssh/config`, and from then on `ssh <service>.insta` opens a shell on the machine. In
+     Claude Code this one can also be typed with a leading `!`. The alias is one per computer, so
+     when they already have that name from another project, `--setup` refuses. Rename the new
+     service first with `insta --agent service rename compute <service> <new-name> --branch <branch>`,
+     which keeps its URL and `/data`, and hand over the command with the new name. A 400 that names
+     `compute exec` means the service is on the older compute plane, which has no SSH.
+
+Report the URL (the browser terminal, signed in with that username and the password they set), the
+`ssh <service>.insta` alias, and that inside the machine they start the agent with `claude`,
+`codex` or `pi` and sign in there (`codex login --device-auth` for Codex, whose browser callback
+cannot reach the machine). This is the supported way to give someone a shell to keep working in.
 
 **A unit of work on an existing project (feature, fix, experiment, agent task):** one branch per
 unit of work — see the core principle below and **[branching.md](references/branching.md)**.
