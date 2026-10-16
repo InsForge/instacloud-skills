@@ -207,6 +207,10 @@ insta --agent domain zone list                   # `waiting for nameservers` →
 insta --agent domain attach example.com          # records land in the zone by themselves now — apex and all
 ```
 
+Attach order does not matter: a hostname attached **before** `zone delegate` gets its records
+published into the zone once the zone is delegated, with no re-attach. The one exception is a
+hostname already `failed` (e.g. at the 48h deadline): run `domain attach` on it once to retry.
+
 Three sharp edges, all deliberate: a domain carrying **live MX records is refused** (a DNS move
 that can drop mail is never implicit — move mail first or stay on the records path; relay the
 refusal sentence, it names the fix); the **review-then-switch contract is the safety of the whole
@@ -281,8 +285,31 @@ insta --agent domain attach api.myapp.com  --group api    # CLI ≥ 0.0.80 — o
 insta --agent domain attach docs.myapp.com --group web    # CLI ≥ 0.0.80 — docs.myapp.com joins it
 ```
 
+A bought domain reads `active` in `domain status` once any of its hostnames serves; a hostname that
+failed (often the apex) keeps its own `failed` line and reason, so read the per-hostname lines.
+
 Delete a service and only ITS hostnames go: the rest keep serving, and a domain left with nothing
 goes `detached` — the registration stands, and `domain attach` binds it somewhere else.
+
+### Troubleshooting a stuck custom domain
+
+The plane re-checks every pending hostname in the background (about every 2 min), so a fixed
+record advances on its own: re-run `check` to read the state, not to nudge it.
+
+1. Run `insta --agent domain check <host>` and read its `error` line: it carries the edge's own
+   reason for the stuck hostname (`domain status <name>` shows the same reason per hostname).
+2. Map the reason to the fix:
+   - **CAA records block the certificate authority**: new hostnames are issued by Let's Encrypt.
+     Have the user add a CAA record `0 issue "letsencrypt.org"` on the hostname's domain, or
+     remove its CAA records.
+   - **Apex not pointed at the edge** (or "using Cloudflare"): the records path cannot serve an
+     apex. Delegate the nameservers (`insta --agent domain zone delegate` for a BYO domain,
+     `insta --agent domain delegate` for one bought here) or bind `www` instead.
+   - **Subdomain not pointed**: publish the CNAME exactly as `attach` printed it, DNS-only (not
+     proxied through the user's own CDN).
+3. Never ask support to "mark it active": the state is the edge's verdict, and only fixing the
+   reason changes it. ICANN's 60-day transfer hold on a new registration never blocks DNS or
+   verification, so do not wait it out.
 
 ## Dockerfile templates → use the framework recipes
 
