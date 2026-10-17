@@ -185,64 +185,46 @@ app's expected status) → report deployed **with the URL**. Anything else → t
 
 ## Custom domains
 
+Buying a domain through InstaCloud, and delegating a domain registered elsewhere to an
+InstaCloud-managed zone, are not offered right now. A domain the user owns attaches as a subdomain
+such as `www`, and a domain the org already bought through InstaCloud keeps working as described
+further down.
+
 **You already own the name** — you set the DNS, InstaCloud does the cert and routing:
 
 ```bash
-insta --agent domain attach app.example.com [--branch --group]   # prints the DNS records to add
-insta --agent domain check app.example.com                    # status once DNS propagates
+insta --agent domain attach www.example.com [--branch --group]   # prints the DNS records to add
+insta --agent domain check www.example.com                    # status once DNS propagates
 ```
 
-The records live in **your** registrar (CNAME for a subdomain, A/AAAA for an apex, + a validation CNAME).
+The records live at **your** DNS provider: the `CNAME` and `TXT` records `attach` prints.
+**Attach a subdomain such as `www`, not the root.** `domain attach example.com` is refused for a
+domain registered elsewhere (`apex_requires_delegation`), because DNS cannot hold a CNAME at the
+root. Attach `www.example.com` and have the user redirect `example.com` to it at their DNS provider.
+The refusal also suggests pointing the domain's nameservers at InstaCloud, which is not offered
+right now.
 
-**Or delegate the whole BYO domain** (CLI ≥ 0.1.4, platform BYO zones) — point the domain's
-nameservers at an InstaCloud-managed zone once, and every later attach publishes its own records,
-**apex included** (the records path above cannot serve a BYO apex; delegation can):
+A domain registered elsewhere that the org already delegated to an InstaCloud-managed zone still
+works: it shows in `insta --agent domain zone list`, and attach publishes its records into that
+zone, root included.
+`insta --agent domain zone release example.com` (org admin, gated `zone.delegate`) takes it off
+again. The platform prunes what it published and deletes the zone, and the printed next step is
+re-pointing the nameservers at the user's own provider. Hostnames then re-verify on the records
+path, where the root cannot attach.
 
-```bash
-insta --agent domain zone delegate example.com   # org admin; gated: zone.delegate — same policy shape as domain.delegate
-insta --agent domain zone records example.com    # REVIEW before switching: the scan that seeded the zone is a heuristic
-# … add anything missing at your CURRENT DNS provider, re-run `zone delegate` to re-import, THEN
-# set the two printed nameservers at the domain's registrar …
-insta --agent domain zone list                   # `waiting for nameservers` → `delegated` once the registry answers
-insta --agent domain attach example.com          # records land in the zone by themselves now — apex and all
-```
-
-Three sharp edges, all deliberate: a domain carrying **live MX records is refused** (a DNS move
-that can drop mail is never implicit — move mail first or stay on the records path; relay the
-refusal sentence, it names the fix); the **review-then-switch contract is the safety of the whole
-flow** — records the scan missed (uncommon types: SRV, CAA, DKIM at odd names) drop at the
-nameserver switch unless the review catches them first; and `zone release` is the way back (the
-platform prunes what it published, deletes the zone, and the printed next step is re-pointing the
-nameservers — hostnames then re-verify on the records path).
-
-**You want to buy one** — InstaCloud registers it and owns the zone; you say what it serves:
+**A domain already bought through InstaCloud.** InstaCloud owns the zone, and you say what it serves:
 
 ```bash
-insta --agent domain search myapp --tlds com,dev   # prices you pay, + renewal
-insta --agent domain buy myapp.com --no-open       # CLI ≥ 0.0.80 — → a Stripe Checkout URL to relay
-insta --agent domain status myapp.com              # CLI ≥ 0.0.80 — poll until the order is registered
+insta --agent domain list                          # CLI ≥ 0.0.80, the org's bought domains
 insta --agent domain attach myapp.com              # CLI ≥ 0.0.80 — bind it, and its www
 insta --agent domain status myapp.com              # poll until www serves — the APEX stays pending here
 insta --agent domain delegate myapp.com            # CLI ≥ 0.1.3 — the apex verifies only on a managed zone (details below)
 insta --agent domain status myapp.com              # poll until every hostname you bound is active
 ```
 
-Three things to get right as an agent:
-
-1. **`buy` always ends with a human; whether it also starts with one depends on the policy.** The
-   Checkout URL it answers has to be opened and paid by a person — that half is unconditional, so
-   relay it verbatim and stop rather than reporting the domain as bought. Whether the ORDER needs
-   approval first is the project's agent policy: `full_access`, which a new project starts on,
-   allows `domain.purchase` outright and you get the URL immediately; `branch_specific` answers
-   `approval_required` (relay that line too); `read_only` refuses.
-2. **Nothing is registered before payment, and registrations are non-refundable.** A wrong name is
-   real money, so read the quote back before ordering.
-3. **Nobody is asked for a registrant contact.** InstaCloud registers under its own registrar
-   account, so there is no contact to collect and no step before `search`.
-
-Payment registers the name and nothing else — **buying is not attaching**, so the domain sits as
-inventory until you say what it should serve. The domain belongs to the **org**: any project in it
-can attach a hostname, and `domain list` shows the org's whole inventory. `domain attach myapp.com` binds `myapp.com` **and**
+A bought domain serves nothing until it is attached: it sits as inventory until you say what it
+should serve. The domain belongs to the **org**: any project in it can attach a hostname, and
+`domain list` shows the org's whole inventory. `domain attach myapp.com` binds `myapp.com` **and**
 `www.myapp.com`; the platform publishes the DNS in the zone it controls, so there are no records for
 you to add.
 
@@ -257,7 +239,7 @@ insta --agent domain status myapp.com     # pending hostnames re-verify on their
 insta --agent domain attach myapp.com     # ONLY if status still shows the apex `failed` (e.g. it hit the 48h deadline before you delegated): failed is terminal until retried
 ```
 
-Whether it runs or waits is the project's agent policy, exactly as with `buy`: `full_access`, which
+Whether it runs or waits is the project's agent policy: `full_access`, which
 a new project starts on, allows `domain.delegate` outright — **the delegation just executes, no
 approval stands in the way** — `branch_specific` answers `approval_required` (relay that line),
 `read_only` refuses. That gate is read from the linked project; a project-less credential (an
