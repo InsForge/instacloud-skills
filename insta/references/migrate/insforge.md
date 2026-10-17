@@ -378,10 +378,10 @@ measured and the sequence as reviewed.
    done                                              # the status is `secrets set`'s, so CHECK it: an unchecked
                                                      # write scrolls past and the target keeps the wrong key.
    # ROOT_ADMIN_* cannot be read from the source (point 2), and without them the first deploy 502s with nothing
-   # serving. **The user picks the password; do not generate one.** They are the dashboard's only admin login and
-   # insta has no `secrets get` — `secrets list` returns names, not values — so anything minted here is gone the
-   # moment this shell exits. Take it from the environment, which keeps it out of argv the way the PG* vars below do.
-   [ -n "$ROOT_ADMIN_PASSWORD" ] || { echo 'ask the user to choose ROOT_ADMIN_PASSWORD and export it first: it cannot be read back later' >&2; exit 1; }
+   # serving. **The user picks the password; do not generate one.** They are the dashboard's only admin login, so
+   # the user has to know them. Both stay readable with `insta --agent secrets --service compute/api --print`.
+   # Take it from the environment, which keeps it out of argv the way the PG* vars below do.
+   [ -n "$ROOT_ADMIN_PASSWORD" ] || { echo 'ask the user to choose ROOT_ADMIN_PASSWORD and export it first' >&2; exit 1; }
    printf 'admin' | insta --agent secrets set ROOT_ADMIN_USERNAME --service compute/api || exit 1
    printf '%s' "$ROOT_ADMIN_PASSWORD" | insta --agent secrets set ROOT_ADMIN_PASSWORD --service compute/api || exit 1
 
@@ -415,8 +415,8 @@ measured and the sequence as reviewed.
 2. **`ROOT_ADMIN_USERNAME` and `ROOT_ADMIN_PASSWORD` are not retrievable, and the backend refuses to boot without
    them.** They live only in the source's env (`auth.service.ts` compares against `process.env`) and are in no dump.
    Have the **user** choose new ones; nothing is lost, because they authenticate the dashboard's root admin and not
-   any user row. Do not mint the password yourself: insta exposes no `secrets get`, so a generated value is
-   unrecoverable once the migration shell exits and the user is locked out of their own dashboard.
+   any user row. Do not mint the password yourself: it is the root login to the user's own dashboard, so they
+   choose it and know it. If it is lost later, `insta --agent secrets --service compute/api --print` reads it back.
    **The failure is badly disguised:** a first deploy without them fails as
    `the compute provider could not roll the deploy — the previous version keeps serving (HTTP 502)` with nothing
    serving at all. `insta --agent compute logs <svc>` carries the real line.
