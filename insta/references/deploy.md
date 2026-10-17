@@ -200,7 +200,8 @@ insta --agent domain check www.example.com                    # status once DNS 
 The records live at **your** DNS provider: the `CNAME` and `TXT` records `attach` prints.
 **Attach a subdomain such as `www`, not the root.** `domain attach example.com` is refused for a
 domain registered elsewhere (`apex_requires_delegation`), because DNS cannot hold a CNAME at the
-root. Attach `www.example.com` and have the user redirect `example.com` to it at their DNS provider.
+root. Attach `www.example.com` and have the user redirect `example.com` to it with their DNS
+provider's URL forwarding (redirect) feature, since DNS records alone cannot redirect.
 The refusal also suggests pointing the domain's nameservers at InstaCloud, which is not offered
 right now.
 
