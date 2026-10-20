@@ -32,7 +32,7 @@ read-only commands. Examples include the global flag explicitly; with npx, use
 `npx -y insta@latest --agent <command> …`. Do not rely on environment detection alone.
 Commands explicitly marked for a human admin are relay instructions, not agent tool calls:
 never execute them yourself or remove `--agent` to bypass a restriction.
-First run `insta --agent agent setup` in the linked project (or `--project <id>` / `--create <name>`).
+First run `insta --agent agent setup` in the linked project (or `--project <id>` / `--create [name]`).
 This stores a project-bound, 24-hour session in `.insta/agent-session.json`, automatically ignored
 by Git. It supplements the existing user login. Missing, expired, revoked or wrong-project sessions
 fail with setup guidance; never retry a rejected agent request without `--agent`.
