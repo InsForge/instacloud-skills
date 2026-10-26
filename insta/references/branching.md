@@ -89,7 +89,7 @@ npm install     # fresh worktrees have NO node_modules — first build fails wit
 ```
 
 Dispatch one subagent per worktree with a brief like: *"Work only in <dir>. Your environment is
-insta branch feat-x (already linked): build, `insta --agent deploy . --port <n>`, capture the printed URL,
+the insta branch `feat-x` (already linked): build, `insta --agent deploy . --port <n>`, capture the printed URL,
 verify it serves, then open a PR. Don't touch other branches or switch this directory's link."*
 Each agent has its own DB/bucket/compute/URLs — zero collision. In a **shared** checkout, never
 `branch switch`; pass `--branch <name>` explicitly instead (switch races the other agents).

@@ -261,7 +261,7 @@ never reads it; TLS works because the Deno driver negotiates it. **Cold starts c
 tested fix**: each cold worker does `await import('npm:@insforge/sdk')`, roughly 40 registry downloads on first
 invocation (1471 ms against ~200 ms warm), repeated after every restart. The obvious answer, a volume for the
 module cache, does **not** work as written: insta volumes mount at `/data` and arrive empty (the disk
-row in `render.md` says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
+row in [render.md](render.md) says a fresh one holds `lost+found`), so an image that prepares and chowns `/data` at build time has that
 preparation hidden by the mount, and the container — which runs as the non-root `deno` user — then cannot write
 there. Fixing it needs a runtime chown before dropping privileges, which the measured run did not do. Leave the
 volume off unless you are willing to test that.
