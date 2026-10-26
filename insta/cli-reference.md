@@ -506,8 +506,9 @@ insta --agent deploy --image mygame:2 --port 7777 --endpoint tcp+udp   # switch 
   deploy**: until then a service born empty prints `udp/<port> (address after the first deploy)`
   (`tcp+udp/<port> …` for both; `endpoint_host` is `null` under `--json`), and the deploy's
   `deployed … -> udp://<host>:<port>` line (`endpointHost` under `deploy --json`) is where to
-  read it. A tcp+udp deploy prints one scheme per protocol:
-  `-> tcp://<host>:<port>, udp://<host>:<port>`.
+  read it. A tcp+udp service prints one scheme per protocol, on the deploy line
+  (`-> tcp://<host>:<port>, udp://<host>:<port>`) and in `service list` from then on
+  (`tcp://<host>:<port>, udp://<host>:<port>`).
 - **IPv6 clients only** (AAAA record, no A record), **no TLS from the platform** (QUIC and DTLS bring
   their own), **no custom domain**, **no `--websocket`**, insta-compute only — as for tcp.
 - **Refused UDP ports**: reflection/amplification ports (7, 17, 19, 53, 111, 123, 137, 138, 161, 162,
