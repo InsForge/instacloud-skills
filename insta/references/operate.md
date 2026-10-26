@@ -106,8 +106,8 @@ insta --agent postgres limits --memory 8Gi --cpu 4     # same dial for postgres
   vCPU only throttles, so it is derived unless `--cpu` is passed for a parallel workload. On
   compute, setting always requires `--memory` (`--cpu` is an override, never valid alone); on db,
   either flag alone works. Compute accepts `mb`/`gb`/`Mi`/`Gi` spellings in any case, all binary
-  (`1gb` = `1Gi`); postgres passes a k8s quantity through unconverted (`Gi`/`Mi`/`G`/`M`) and is
-  **case-exact**: `4Gi` works, `4gi` is rejected.
+  (`1gb` = `1Gi`); postgres passes a k8s quantity through unconverted (`Gi`/`Mi` binary, `G`/`M`
+  decimal — `4G` is 4 × 10⁹ bytes, not `4Gi`) and is **case-exact**: `4Gi` works, `4gi` is rejected.
 - **Plan caps.** A new service is born at its plan's ceiling (free 4 vCPU / 4 GB, pro 8 / 8) and
   may move anywhere within it on any plan; raising ABOVE the free cap is the one thing a plan gates,
   precisely because usage billing means the size is no longer what you pay for.
