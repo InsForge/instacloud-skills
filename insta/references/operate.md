@@ -105,7 +105,7 @@ insta --agent postgres limits --memory 8Gi --cpu 4     # same dial for postgres
 - **Memory is the dial.** It is the ceiling that actually bites (hitting it OOM-kills the app);
   vCPU only throttles, so it is derived unless `--cpu` is passed for a parallel workload. On
   compute, setting always requires `--memory` (`--cpu` is an override, never valid alone); on db,
-  either flag alone works. Decimal (`mb`/`gb`) and binary (`Mi`/`Gi`) suffixes are both accepted.
+  either flag alone works. Compute accepts `mb`/`gb`/`Mi`/`Gi` spellings, all binary (`1gb` = `1Gi`); postgres takes `Gi`/`Mi` quantities only (`4Gi`).
 - **Plan caps.** A new service is born at its plan's ceiling (free 4 vCPU / 4 GB, pro 8 / 8) and
   may move anywhere within it on any plan; raising ABOVE the free cap is the one thing a plan gates,
   precisely because usage billing means the size is no longer what you pay for.
@@ -333,7 +333,7 @@ isn't "done" until `agent manifest`/`agent events` reflect it.
 | login | required | doesn't exist (localhost trust) |
 | usage / billing | real (billing dimensions) | 501 — no billing locally |
 | metrics / logs | served (compute full, postgres limited) | 501 today (docker-stats planned) |
-| source deploy (`deploy <dir>`) | ✅ remote build | not yet — use `--image` |
+| source deploy (`deploy <dir>`) | ✅ remote build | builds with your local Docker — same command |
 | service add postgres/storage | ✅ (plan cap per type) | 501 — one of each, auto-provisioned |
 | branch compute | parent's image, already running | parent's image, redeployed asleep |
 | branch app URL | own subdomain | host port +1000 |
