@@ -1,7 +1,7 @@
 # Migrate an app in from another platform
 
 Move a running app (Heroku, Railway, Fly, Render) onto InstaCloud: provision, move env and data,
-cut over. The reader-facing walkthroughs are `docs.instacloud.com/migrate/`, one page each for render,
+cut over. The reader-facing walkthroughs are `www.instacloud.com/docs/migrate/`, one page each for render,
 railway, fly and insforge, and they are deliberately thin: they hand the user a prompt and point at
 this runbook, so **this file is what actually gets followed.** Those pages deliberately do NOT list these
 steps, so do not add detail there when it belongs here. The one thing they do promise the reader is
